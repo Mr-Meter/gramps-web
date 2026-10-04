@@ -8,7 +8,12 @@ import '../components/GrampsjsIcon.js'
 
 import {GrampsjsView} from './GrampsjsView.js'
 
-import {fireEvent, objectIconPath, objectTypeToEndpoint} from '../util.js'
+import {
+  canEditObject,
+  fireEvent,
+  objectIconPath,
+  objectTypeToEndpoint,
+} from '../util.js'
 import {clearDraftsWithPrefix} from '../api.js'
 import '../components/GrampsjsBreadcrumbs.js'
 
@@ -140,7 +145,7 @@ export class GrampsjsViewObject extends GrampsjsView {
   }
 
   get canEdit() {
-    return this.appState.permissions.canEdit
+    return canEditObject(this.appState.permissions, this._data)
   }
 
   getUrl() {

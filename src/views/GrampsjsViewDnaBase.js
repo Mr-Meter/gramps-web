@@ -73,6 +73,9 @@ export class GrampsjsViewDnaBase extends GrampsjsStaleDataMixin(GrampsjsView) {
     this._selectDataLoading = false
   }
 
+  // The FAB opens a form in which the person to change is picked, so it is
+  // gated on the role only. Controls that change the selected person are
+  // gated with canEditObject(this.appState.permissions, this.selectedPerson).
   render() {
     const noSelectData = !this._selectDataLoading && !this._data.length
     const noDnaData =
@@ -126,8 +129,12 @@ export class GrampsjsViewDnaBase extends GrampsjsStaleDataMixin(GrampsjsView) {
     }
   }
 
+  get selectedPerson() {
+    return this._data.find(person => person.gramps_id === this.grampsId)
+  }
+
   get selectedHandle() {
-    return this._data.find(person => person.gramps_id === this.grampsId)?.handle
+    return this.selectedPerson?.handle
   }
 
   async _fetchDnaData(clear = false) {

@@ -1,5 +1,6 @@
 import {
   getSettings,
+  getBranches,
   getPermissions,
   getTreeConfig,
   getTreeId,
@@ -301,6 +302,7 @@ export function getInitialAppState() {
       canUpgradeTree: false,
       canEditTree: false,
       canViewOtherTree: false,
+      branches: null,
     },
     i18n: {
       strings: {},
@@ -421,6 +423,16 @@ export function isTaskInTree(task, treeId) {
   return !task?.tree || !treeId || task.tree === treeId
 }
 
+// Both null, or arrays with the same handles in the same order. getBranches()
+// returns a fresh array on every call, so comparing references would make
+// every permission refresh look like a change.
+function sameBranches(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) {
+    return a === b
+  }
+  return a.length === b.length && a.every((handle, i) => handle === b[i])
+}
+
 export function appStateUpdatePermissions(appState) {
   const rawPermissions = getPermissions()
   const permissions = {
@@ -434,13 +446,18 @@ export function appStateUpdatePermissions(appState) {
     // Granted to server Administrators only, not Owners - used to gate
     // server-wide actions like creating a new tree.
     canViewOtherTree: rawPermissions.includes('ViewOtherTree'),
+    // Tag handles of the user's branches, or null when edits are not
+    // restricted to branches (see canEditObject in util.js).
+    branches: getBranches(),
   }
   // Return the same object reference if permissions haven't changed,
   // to avoid triggering unnecessary re-renders (which would reset open dialogs).
   const existing = appState.permissions
+  const {branches, ...flags} = permissions
   if (
     existing &&
-    Object.keys(permissions).every(key => existing[key] === permissions[key])
+    sameBranches(existing.branches, branches) &&
+    Object.keys(flags).every(key => existing[key] === flags[key])
   ) {
     return appState
   }

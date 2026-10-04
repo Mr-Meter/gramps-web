@@ -13,7 +13,7 @@ import '../components/GrampsjsBreadcrumbs.js'
 
 import {GrampsjsViewDnaBase} from './GrampsjsViewDnaBase.js'
 
-import {fireEvent, personDisplayName} from '../util.js'
+import {canEditObject, fireEvent, personDisplayName} from '../util.js'
 
 export class GrampsjsViewDnaMatches extends GrampsjsViewDnaBase {
   static get properties() {
@@ -34,21 +34,25 @@ export class GrampsjsViewDnaMatches extends GrampsjsViewDnaBase {
   /* Implemented abstract methods */
 
   renderFab() {
-    return this.grampsIdMatch
-      ? html`<md-fab variant="secondary" @click=${this._handleClickEdit}>
-          <grampsjs-icon
-            slot="icon"
-            .path="${mdiPencil}"
-            color="var(--mdc-theme-on-secondary)"
-          ></grampsjs-icon>
-        </md-fab>`
-      : html`<md-fab variant="secondary" @click=${this._handleClickAdd}>
-          <grampsjs-icon
-            slot="icon"
-            .path="${mdiPlus}"
-            color="var(--mdc-theme-on-secondary)"
-          ></grampsjs-icon>
-        </md-fab>`
+    if (this.grampsIdMatch) {
+      // Editing a match changes the selected person's association list.
+      return canEditObject(this.appState.permissions, this.selectedPerson)
+        ? html`<md-fab variant="secondary" @click=${this._handleClickEdit}>
+            <grampsjs-icon
+              slot="icon"
+              .path="${mdiPencil}"
+              color="var(--mdc-theme-on-secondary)"
+            ></grampsjs-icon>
+          </md-fab>`
+        : ''
+    }
+    return html`<md-fab variant="secondary" @click=${this._handleClickAdd}>
+      <grampsjs-icon
+        slot="icon"
+        .path="${mdiPlus}"
+        color="var(--mdc-theme-on-secondary)"
+      ></grampsjs-icon>
+    </md-fab>`
   }
 
   // eslint-disable-next-line class-methods-use-this
@@ -246,10 +250,6 @@ export class GrampsjsViewDnaMatches extends GrampsjsViewDnaBase {
     `
   }
 
-  get selectedPerson() {
-    return this._data.find(person => person.gramps_id === this.grampsId)
-  }
-
   async _handleSaveMatch(e) {
     const sourceHandle = e.detail.data.source_handle
     const targetHandle = e.detail.data.target_handle
@@ -293,10 +293,6 @@ export class GrampsjsViewDnaMatches extends GrampsjsViewDnaBase {
       return ''
     }
     return ''
-  }
-
-  get selectedHandle() {
-    return this._data.find(person => person.gramps_id === this.grampsId)?.handle
   }
 
   async _deleteMatch() {

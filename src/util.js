@@ -699,6 +699,20 @@ export function arrayEqual(A, B) {
   return A.length === B.length && A.every(e => B.includes(e))
 }
 
+// Mirrors the backend branch guard (gramps_webapi/branch_guard.py): a user
+// whose edits are restricted to branches may only change objects tagged with
+// one of them. This only hides controls - the server enforces the rule.
+export function canEditObject(permissions, obj) {
+  if (!permissions?.canEdit) {
+    return false
+  }
+  const {branches} = permissions
+  if (!Array.isArray(branches)) {
+    return true
+  }
+  return (obj?.tag_list ?? []).some(handle => branches.includes(handle))
+}
+
 function _toNumber(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null

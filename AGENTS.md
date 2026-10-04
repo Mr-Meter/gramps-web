@@ -119,7 +119,10 @@ appState.permissions.canViewPrivate
 appState.permissions.canManageUsers
 appState.permissions.canUseChat
 appState.permissions.canUpgradeTree
+appState.permissions.branches
 ```
+
+`branches` is `null` for unrestricted users and an array of tag handles for users whose edits are limited to their branches (tags); use `canEditObject(permissions, obj)` from `util.js` to decide whether edit controls for a specific existing object are shown (the server enforces the rule).
 
 ## i18n
 

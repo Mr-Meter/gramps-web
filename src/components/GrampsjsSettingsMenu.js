@@ -15,6 +15,7 @@ import {
   mdiWrench,
   mdiAccountMultiple,
   mdiAccountCog,
+  mdiAccountSwitch,
   mdiAccountCircle,
   mdiHelp,
   mdiCloud,
@@ -26,12 +27,14 @@ import {renderIconSvg} from '../icons.js'
 import './GrampsjsIcon.js'
 import {clickKeyHandler} from '../util.js'
 
+// [title, url, icon, required permission key of appState.permissions or null]
 const menuItems = [
-  ['User settings', '/settings/user', mdiAccountCog, false],
-  ['Administration', '/settings/administration', mdiWrench, true],
-  ['Manage users', '/settings/users', mdiAccountMultiple, true],
-  ['System Information', '/settings/info', mdiInformation, false],
-  ['Help', '/help', mdiHelp, false],
+  ['User settings', '/settings/user', mdiAccountCog, null],
+  ['Administration', '/settings/administration', mdiWrench, 'canManageUsers'],
+  ['Manage users', '/settings/users', mdiAccountMultiple, 'canManageUsers'],
+  ['Succession', '/settings/succession', mdiAccountSwitch, 'canEdit'],
+  ['System Information', '/settings/info', mdiInformation, null],
+  ['Help', '/help', mdiHelp, null],
 ]
 
 class GrampsjsSettingsMenu extends GrampsjsAppStateMixin(LitElement) {
@@ -133,8 +136,8 @@ class GrampsjsSettingsMenu extends GrampsjsAppStateMixin(LitElement) {
     `
   }
 
-  _menuItem(title, url, icon, needsAdminPermission) {
-    if (needsAdminPermission && !this.appState.permissions.canManageUsers) {
+  _menuItem(title, url, icon, permission) {
+    if (permission && !this.appState.permissions[permission]) {
       return ''
     }
     return html`

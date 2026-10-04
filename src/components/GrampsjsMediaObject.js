@@ -19,6 +19,7 @@ import './GrampsjsFaces.js'
 import './GrampsjsTextRecognition.js'
 import {
   arrayEqual,
+  canEditObject,
   emptyDate,
   fireEvent,
   getNameFromProfile,
@@ -407,7 +408,7 @@ export class GrampsjsMediaObject extends GrampsjsObject {
         </md-icon-button>
       </span>
       <grampsjs-text-recognition
-        ?canEdit="${this.appState.permissions.canEdit}"
+        ?canEdit="${canEditObject(this.appState.permissions, this.data)}"
         .languages="${this.dbInfo?.server?.ocr_languages ?? []}"
         handle="${this.data.handle ?? ''}"
         .appState="${this.appState}"

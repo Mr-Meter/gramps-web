@@ -206,6 +206,7 @@ export class GrampsjsTextRecognition extends GrampsjsAppStateMixin(LitElement) {
   static get properties() {
     return {
       handle: {type: String},
+      canEdit: {type: Boolean},
       options: {type: Object},
       languages: {type: Array},
       _string: {type: String},
@@ -216,6 +217,7 @@ export class GrampsjsTextRecognition extends GrampsjsAppStateMixin(LitElement) {
     super()
     this.options = {}
     this.handle = ''
+    this.canEdit = false
     this.languages = []
     this._string = ''
   }
@@ -257,7 +259,7 @@ export class GrampsjsTextRecognition extends GrampsjsAppStateMixin(LitElement) {
         ></grampsjs-task-progress-indicator>
       </p>
       <p class="result">${this._string ?? ''}</p>
-      ${this._string && this.appState.permissions.canEdit
+      ${this._string && this.canEdit
         ? html`
             <p>
               <mwc-button raised @click="${this._handleSaveAsNote}"

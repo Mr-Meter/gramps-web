@@ -4,11 +4,15 @@ import '@material/web/select/filled-select'
 import '@material/web/select/select-option'
 
 import {GrampsjsView} from './GrampsjsView.js'
+import {GrampsjsStaleDataMixin} from '../mixins/GrampsjsStaleDataMixin.js'
 import '../components/GrampsjsUsers.js'
 import '../components/GrampsjsShareUrl.js'
 import '../components/GrampsjsChatPermissions.js'
+import '../components/GrampsjsBranches.js'
 
-export class GrampsjsViewUserManagement extends GrampsjsView {
+export class GrampsjsViewUserManagement extends GrampsjsStaleDataMixin(
+  GrampsjsView
+) {
   static get styles() {
     return [
       super.styles,
@@ -37,6 +41,7 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
     return {
       userData: {type: Array},
       dbInfo: {type: Object},
+      _tags: {type: Array},
     }
   }
 
@@ -44,6 +49,7 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
     super()
     this.userData = []
     this.dbInfo = {}
+    this._tags = []
   }
 
   // eslint-disable-next-line class-methods-use-this
@@ -74,6 +80,7 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
       <grampsjs-users
         .appState="${this.appState}"
         .data="${this.userData}"
+        .tags="${this._tags}"
         ?ismulti="${!!this.dbInfo?.server?.multi_tree}"
         @user:updated="${this._handleUserChanged}"
         @user:added="${this._handleUserAdded}"
@@ -81,11 +88,24 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
         @user:added-multiple="${this._handleUsersAdded}"
       >
       </grampsjs-users>
+
+      <h3>${this._('Branches')}</h3>
+      <grampsjs-branches .appState="${this.appState}"></grampsjs-branches>
     `
   }
 
   firstUpdated() {
+    super.firstUpdated()
     this._fetchUserData()
+  }
+
+  _onLangChanged(lang) {
+    this._fetchTags(lang)
+  }
+
+  // tags are managed in the admin settings, so refresh them when coming back
+  handleUpdateStaleData() {
+    this._fetchTags(this.appState.i18n.lang)
   }
 
   _handleUserChanged(e) {
@@ -94,6 +114,7 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
       role: data.role,
       email: data.email,
       full_name: data.full_name,
+      branches: Array.isArray(data.branches) ? data.branches : [],
     })
   }
 
@@ -104,6 +125,7 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
       email: data.email,
       full_name: data.full_name,
       password: data.password,
+      ...(data.branches?.length ? {branches: data.branches} : {}),
     })
   }
 
@@ -170,6 +192,19 @@ export class GrampsjsViewUserManagement extends GrampsjsView {
       }
       this.loading = false
     })
+  }
+
+  async _fetchTags(lang) {
+    const data = await this.appState.apiGet(
+      `/api/tags/?locale=${lang || 'en'}&pagesize=500`
+    )
+    if ('data' in data) {
+      this.error = false
+      this._tags = data.data
+    } else if ('error' in data) {
+      this.error = true
+      this._errorMessage = data.error
+    }
   }
 }
 

@@ -36,7 +36,12 @@ import './GrampsjsObjectToc.js'
 import './GrampsjsObjectRevisions.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
 
-import {fireEvent, endpointToObjectClass, apiVersionAtLeast} from '../util.js'
+import {
+  fireEvent,
+  endpointToObjectClass,
+  apiVersionAtLeast,
+  canEditObject,
+} from '../util.js'
 import {getMediaUrl} from '../api.js'
 
 /*
@@ -835,7 +840,7 @@ export class GrampsjsObject extends GrampsjsAppStateMixin(LitElement) {
           .media=${this.data?.extended?.media}
           .mediaRef=${this.data?.media_list}
           ?edit="${this.edit}"
-          ?editRect="${this.appState.permissions.canEdit}"
+          ?editRect="${canEditObject(this.appState.permissions, this.data)}"
         ></grampsjs-gallery>`
       case 'metadata':
         return html`

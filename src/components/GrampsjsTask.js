@@ -25,7 +25,7 @@ import './GrampsjsNoteContent.js'
 import './GrampsjsConnectedNote.js'
 import './GrampsjsBreadcrumbs.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
-import {debounce, fireEvent} from '../util.js'
+import {canEditObject, debounce, fireEvent} from '../util.js'
 
 export class GrampsjsTask extends GrampsjsAppStateMixin(LitElement) {
   static get styles() {
@@ -103,7 +103,7 @@ export class GrampsjsTask extends GrampsjsAppStateMixin(LitElement) {
   }
 
   get canEdit() {
-    return this.appState.permissions.canEdit
+    return canEditObject(this.appState.permissions, this.source)
   }
 
   render() {

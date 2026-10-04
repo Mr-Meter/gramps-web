@@ -20,9 +20,11 @@ import {
 import {GrampsjsTableBase} from './GrampsjsTableBase.js'
 import {userRoles} from './GrampsjsFormUser.js'
 import {fireEvent} from '../util.js'
+import {isHandleList, resolveBranchTags} from '../util/branches.js'
 
 import './GrampsjsTooltip.js'
 import './GrampsjsIcon.js'
+import './GrampsjsTagsSmall.js'
 
 const ALL_ROLES = '__all__'
 
@@ -73,6 +75,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
     return {
       dialogContent: {type: String},
       ismulti: {type: Boolean},
+      tags: {type: Array},
       _downloadUrl: {type: String},
       _userData: {type: Array},
       _filterText: {type: String},
@@ -84,6 +87,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
     super()
     this.dialogContent = ''
     this.ismulti = false
+    this.tags = []
     this._downloadUrl = ''
     this._userData = []
     this._filterText = ''
@@ -117,6 +121,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
           <th>${this._('Full Name')}</th>
           <th>${this._('E-mail')}</th>
           <th>${this._('Role')}</th>
+          <th>${this._('Branches')}</th>
           <th>${this._('Account Source')}</th>
           <th></th>
         </tr>
@@ -127,6 +132,11 @@ export class GrampsjsUsers extends GrampsjsTableBase {
               <td>${obj.full_name}</td>
               <td>${obj.email}</td>
               <td>${this._(userRoles[obj.role])}</td>
+              <td>
+                <grampsjs-tags-small
+                  .data="${resolveBranchTags(obj.branches, this.tags)}"
+                ></grampsjs-tags-small>
+              </td>
               <td>${obj.account_source || this._('Password')}</td>
               <td>
                 <md-icon-button
@@ -371,6 +381,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
         full_name: user.full_name,
         email: user.email,
         role: user.role,
+        ...(isHandleList(user.branches) ? {branches: user.branches} : {}),
       }))
       .filter(user => !!user.name)
     this._userData = processedData
@@ -403,6 +414,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
         <div slot="content">
           <grampsjs-form-user
             .data="${user}"
+            .tags="${this.tags}"
             .appState="${this.appState}"
             ?ismulti="${this.ismulti}"
           ></grampsjs-form-user>
@@ -455,6 +467,7 @@ export class GrampsjsUsers extends GrampsjsTableBase {
         <div slot="content">
           <grampsjs-form-user
             newUser
+            .tags="${this.tags}"
             .appState="${this.appState}"
             ?ismulti="${this.ismulti}"
           ></grampsjs-form-user>

@@ -6,10 +6,14 @@ import {html, css, LitElement} from 'lit'
 import '@material/mwc-textfield'
 import '@material/web/select/filled-select.js'
 import '@material/web/select/select-option.js'
+import '@material/web/chips/chip-set.js'
+import '@material/web/chips/filter-chip.js'
 
 import {sharedStyles} from '../SharedStyles.js'
 import './GrampsjsFormString.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
+import {colorToCss} from '../color.js'
+import {canHaveBranches, toggleBranch} from '../util/branches.js'
 
 export const userRoles = {
   '-2': 'unconfirmed',
@@ -36,6 +40,23 @@ class GrampsjsFormUser extends GrampsjsAppStateMixin(LitElement) {
         .hide {
           display: none;
         }
+
+        .branches h4 {
+          margin-bottom: 4px;
+        }
+
+        .branches p.help {
+          margin-top: 0;
+          font-size: 14px;
+          color: var(--grampsjs-body-font-color-50);
+        }
+
+        md-filter-chip {
+          --md-filter-chip-outline-color: var(--tag-color);
+          --md-filter-chip-selected-container-color: var(--tag-color-bg);
+          --md-filter-chip-selected-label-text-color: var(--tag-color);
+          --md-filter-chip-selected-leading-icon-color: var(--tag-color);
+        }
       `,
     ]
   }
@@ -46,15 +67,17 @@ class GrampsjsFormUser extends GrampsjsAppStateMixin(LitElement) {
       ismulti: {type: Boolean},
       isFormValid: {type: Boolean},
       newUser: {type: Boolean},
+      tags: {type: Array},
     }
   }
 
   constructor() {
     super()
-    this.data = {role: defaultRole}
+    this.data = {role: defaultRole, branches: []}
     this.ismulti = false
     this.isFormValid = false
     this.newUser = false
+    this.tags = []
   }
 
   render() {
@@ -128,6 +151,46 @@ class GrampsjsFormUser extends GrampsjsAppStateMixin(LitElement) {
             )}
         </md-filled-select>
       </p>
+      ${canHaveBranches(this.data.role ?? defaultRole)
+        ? this._renderBranches()
+        : ''}
+    `
+  }
+
+  _renderBranches() {
+    const branches = this.data.branches ?? []
+    return html`
+      <div class="branches">
+        <h4 class="label">${this._('Branches')}</h4>
+        <p class="help">
+          ${this._(
+            'Restrict changes to objects tagged with the selected branches. Leave empty for unrestricted access.'
+          )}
+        </p>
+        ${this.tags.length === 0
+          ? html`<p class="help">
+              ${this._(
+                'No tags exist yet. Create tags in the administration settings to use them as branches.'
+              )}
+            </p>`
+          : html`
+              <md-chip-set>
+                ${this.tags.map(
+                  tag => html`
+                    <md-filter-chip
+                      label="${tag.name}"
+                      ?selected="${branches.includes(tag.handle)}"
+                      style="--tag-color:${colorToCss(
+                        tag.color,
+                        0.9
+                      )};--tag-color-bg:${colorToCss(tag.color, 0.15)}"
+                      @click="${() => this._handleBranchToggle(tag.handle)}"
+                    ></md-filter-chip>
+                  `
+                )}
+              </md-chip-set>
+            `}
+      </div>
     `
   }
 
@@ -148,6 +211,13 @@ class GrampsjsFormUser extends GrampsjsAppStateMixin(LitElement) {
     const role = parseInt(e.target.value, 10)
     this.data = {...this.data, role}
     this._checkFormValid()
+  }
+
+  _handleBranchToggle(handle) {
+    this.data = {
+      ...this.data,
+      branches: toggleBranch(this.data.branches, handle),
+    }
   }
 
   _checkFormValid() {

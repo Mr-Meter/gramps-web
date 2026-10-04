@@ -92,6 +92,21 @@ export function getPermissions() {
   }
 }
 
+// Branch restriction from the access token: the tag handles of the user's
+// branches, or null (= unrestricted) when the claim is absent.
+export function getBranches() {
+  const accessToken = localStorage.getItem('access_token')
+  if (!accessToken || accessToken === '1') {
+    return null
+  }
+  try {
+    const claims = jwtDecode(accessToken) || {}
+    return Array.isArray(claims.branches) ? claims.branches : null
+  } catch (e) {
+    return null
+  }
+}
+
 // grampsjs_settings are tree-independent settings
 // grampsjs_settings_tree are tree-dependendent settings
 // this function returns all of them without distinguishing

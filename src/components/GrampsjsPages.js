@@ -39,6 +39,7 @@ import '../views/GrampsjsViewSettingsUser.js'
 import '../views/GrampsjsViewSysinfo.js'
 import '../views/GrampsjsViewAdminSettings.js'
 import '../views/GrampsjsViewUserManagement.js'
+import '../views/GrampsjsViewSuccession.js'
 import '../views/GrampsjsViewRecent.js'
 import '../views/GrampsjsViewRevisions.js'
 import '../views/GrampsjsViewRevision.js'
@@ -327,6 +328,12 @@ class GrampsjsPages extends GrampsjsAppStateMixin(LitElement) {
             ></grampsjs-view-user-management>
           `
         : ''}
+      <grampsjs-view-succession
+        class="page"
+        ?active=${this.appState.path.page === 'settings' &&
+        this.appState.path.pageId === 'succession'}
+        .appState="${this.appState}"
+      ></grampsjs-view-succession>
       <grampsjs-view-sysinfo
         class="page"
         ?active=${this.appState.path.page === 'settings' &&

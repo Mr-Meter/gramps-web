@@ -7,7 +7,7 @@ import '../components/GrampsjsYtreeLineage.js'
 import '../components/GrampsjsFormNewYDna.js'
 import '../components/GrampsjsFormEditYDna.js'
 import {GrampsjsViewDnaBase} from './GrampsjsViewDnaBase.js'
-import {fireEvent, personDisplayName} from '../util.js'
+import {canEditObject, fireEvent, personDisplayName} from '../util.js'
 
 export class GrampsjsViewYDna extends GrampsjsViewDnaBase {
   /* Implemented abstract methods */
@@ -46,6 +46,11 @@ export class GrampsjsViewYDna extends GrampsjsViewDnaBase {
 
   get _leafCladeName() {
     return this._dnaData?.data?.clade_lineage?.at(-1)?.name
+  }
+
+  // The raw SNP data is an attribute of the selected person.
+  get _canEditSelectedPerson() {
+    return canEditObject(this.appState.permissions, this.selectedPerson)
   }
 
   renderContent() {
@@ -92,7 +97,7 @@ export class GrampsjsViewYDna extends GrampsjsViewDnaBase {
           ></grampsjs-icon>
           ${this._('View')}
         </md-text-button>
-        ${this.appState.permissions.canEdit
+        ${this._canEditSelectedPerson
           ? html`
               <md-text-button @click="${this._editRawSnpData}">
                 <grampsjs-icon
@@ -117,9 +122,11 @@ export class GrampsjsViewYDna extends GrampsjsViewDnaBase {
           <md-text-button @click="${this._handleCancelDialog}"
             >${this._('Close')}</md-text-button
           >
-          <md-text-button @click="${this._editRawSnpData}"
-            >${this._('Edit')}</md-text-button
-          >
+          ${this._canEditSelectedPerson
+            ? html`<md-text-button @click="${this._editRawSnpData}"
+                >${this._('Edit')}</md-text-button
+              >`
+            : ''}
         </div>
       </md-dialog>
     `
