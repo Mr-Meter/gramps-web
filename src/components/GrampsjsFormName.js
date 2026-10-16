@@ -16,7 +16,7 @@ import {
 
 import {classMap} from 'lit/directives/class-map.js'
 import {sharedStyles, iconButtonColorStyles} from '../SharedStyles.js'
-import {fireEvent} from '../util.js'
+import {fireEvent, isPatronymic} from '../util.js'
 import './GrampsjsIcon.js'
 import './GrampsjsFormString.js'
 import './GrampsjsFormSurname.js'
@@ -94,6 +94,15 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
           label="${this._('Given name')}"
         ></grampsjs-form-string>
       </p>
+      <p>
+        <grampsjs-form-string
+          @formdata:changed="${this._handleFormData}"
+          fullwidth
+          id="patronymic"
+          value="${this.data.surname_list?.find(isPatronymic)?.surname || ''}"
+          label="${this._('Patronymic')}"
+        ></grampsjs-form-string>
+      </p>
       <p class="${classMap({hide: !this.showMore})}">
         <grampsjs-form-string
           @formdata:changed="${this._handleFormData}"
@@ -136,11 +145,10 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
       <h4 class="label ${classMap({hide: !this.showMore})}">
         ${this._('Surnames')}
       </h4>
-      ${(this.data.surname_list || [{}]).map(
-        (obj, i) => html`
+      ${this._visibleSurnames().map(
+        ({obj, i}, j, visible) => html`
           <md-icon-button
-            ?disabled="${!this.data?.surname_list ||
-            this.data?.surname_list?.length === 1}"
+            ?disabled="${visible.length === 1}"
             class="edit ${classMap({hide: !this.showMore})}"
             aria-label="${this._('Delete')}"
             @click="${() => this._handleDeleteSurname(i)}"
@@ -150,21 +158,20 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
           </md-icon-button>
 
           <md-icon-button
-            ?disabled="${!this.data?.surname_list || i === 0}"
+            ?disabled="${j === 0}"
             class="edit ${classMap({hide: !this.showMore})}"
             aria-label="${this._('Move Up')}"
-            @click="${() => this._handleUpSurname(i)}"
+            @click="${() => this._handleMoveSurname(i, visible[j - 1].i)}"
           >
             <grampsjs-icon path="${mdiArrowUp}" color="currentColor">
             </grampsjs-icon>
           </md-icon-button>
 
           <md-icon-button
-            ?disabled="${!this.data?.surname_list ||
-            i === this.data?.surname_list?.length - 1}"
+            ?disabled="${j === visible.length - 1}"
             class="edit ${classMap({hide: !this.showMore})}"
             aria-label="${this._('Move Down')}"
-            @click="${() => this._handleDownSurname(i)}"
+            @click="${() => this._handleMoveSurname(i, visible[j + 1].i)}"
           >
             <grampsjs-icon path="${mdiArrowDown}" color="currentColor">
             </grampsjs-icon>
@@ -221,6 +228,35 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
     this.showMore = true
   }
 
+  // The surnames that get surname fields, with their index in surname_list:
+  // all but the patronymic, which has a field of its own. Without any, an
+  // empty one with index -1 is inserted at the start once it is filled in.
+  _visibleSurnames() {
+    const list = this.data.surname_list || []
+    const patronymic = list.findIndex(isPatronymic)
+    const visible = list
+      .map((obj, i) => ({obj, i}))
+      .filter(({i}) => i !== patronymic)
+    return visible.length > 0 ? visible : [{obj: {}, i: -1}]
+  }
+
+  _handlePatronymic(value) {
+    const list = [...(this.data.surname_list || [])]
+    const i = list.findIndex(isPatronymic)
+    if (i > -1 && !value) {
+      list.splice(i, 1)
+    } else if (i > -1) {
+      list[i] = {...list[i], surname: value}
+    } else if (value) {
+      // keep a primary surname in front, so the patronymic never becomes it
+      if (list.length === 0) {
+        list.push({surname: ''})
+      }
+      list.push({surname: value, origintype: 'Patronymic', primary: false})
+    }
+    this.data = {...this.data, surname_list: list}
+  }
+
   reset() {
     this.shadowRoot
       .querySelectorAll('grampsjs-form-string')
@@ -249,17 +285,10 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
     }
   }
 
-  _handleUpSurname(i) {
+  _handleMoveSurname(from, to) {
     this.data = {
       ...this.data,
-      surname_list: [...this.moveItem(this.data.surname_list, i, i - 1)],
-    }
-  }
-
-  _handleDownSurname(i) {
-    this.data = {
-      ...this.data,
-      surname_list: [...this.moveItem(this.data.surname_list, i, i + 1)],
+      surname_list: [...this.moveItem(this.data.surname_list, from, to)],
     }
   }
 
@@ -271,16 +300,21 @@ class GrampsjsFormName extends GrampsjsAppStateMixin(LitElement) {
       )
     ) {
       this.data = {...this.data, [originalTarget.id]: e.detail.data}
+    } else if (originalTarget.id === 'patronymic') {
+      this._handlePatronymic(e.detail.data)
     } else if (originalTarget.id.startsWith('surnames')) {
       const i = e.detail.idx
       const surnameList = this.data.surname_list || []
       this.data = {
         ...this.data,
-        surname_list: [
-          ...surnameList.slice(0, i),
-          e.detail.data,
-          ...surnameList.slice(i + 1),
-        ],
+        surname_list:
+          i < 0
+            ? [e.detail.data, ...surnameList]
+            : [
+                ...surnameList.slice(0, i),
+                e.detail.data,
+                ...surnameList.slice(i + 1),
+              ],
       }
     }
     e.stopPropagation()

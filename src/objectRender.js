@@ -7,6 +7,7 @@ import {
   eventTitleFromProfile,
   citationTitleFromProfile,
   getName,
+  givenWithPatronymic,
   translate,
   objectIconPath,
   eventTypeStrings,
@@ -30,7 +31,7 @@ export function renderPerson(personProfile) {
       <grampsjs-object-link
         object-type="person"
         gramps-id="${personProfile.gramps_id}"
-        >${personProfile.name_given || '…'}
+        >${givenWithPatronymic(personProfile) || '…'}
         ${personProfile.name_surname || '…'}</grampsjs-object-link
       >
     </span>
@@ -57,7 +58,7 @@ export function showObject(type, obj, strings) {
           color="currentColor"
         ></grampsjs-icon>
         <grampsjs-object-link object-type="person" gramps-id="${obj.gramps_id}"
-          >${obj?.profile?.name_given || html`&hellip;`}
+          >${givenWithPatronymic(obj?.profile) || html`&hellip;`}
           ${obj?.profile?.name_surname || html`&hellip;`}
         </grampsjs-object-link>
       `

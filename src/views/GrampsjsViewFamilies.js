@@ -3,7 +3,11 @@ Families list view
 */
 
 import {GrampsjsViewObjectsBase} from './GrampsjsViewObjectsBase.js'
-import {prettyTimeDiffTimestamp, filterCounts} from '../util.js'
+import {
+  prettyTimeDiffTimestamp,
+  filterCounts,
+  givenWithPatronymic,
+} from '../util.js'
 import {
   associationsFilter,
   privacyFilter,
@@ -71,10 +75,10 @@ export class GrampsjsViewFamilies extends GrampsjsViewObjectsBase {
     return {
       grampsId: row.gramps_id,
       father: `${row?.profile?.father?.name_surname || '…'}, ${
-        row?.profile?.father?.name_given || '…'
+        givenWithPatronymic(row?.profile?.father) || '…'
       }`,
       mother: `${row?.profile?.mother?.name_surname || '…'}, ${
-        row?.profile?.mother?.name_given || '…'
+        givenWithPatronymic(row?.profile?.mother) || '…'
       }`,
       relationship: row?.profile?.relationship,
       marriageDate: row?.profile?.marriage?.date,

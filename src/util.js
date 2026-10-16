@@ -74,15 +74,30 @@ export function translate(strings, s) {
   return s.replace('_', '')
 }
 
+// A patronymic is stored the way Gramps desktop does it: a non-primary
+// surname with origin type "Patronymic" (the API splits it off the same way)
+export function isPatronymic(surname) {
+  return surname?.origintype === 'Patronymic' && surname?.primary === false
+}
+
+// Given name of a person profile followed by the patronymic, if any
+export function givenWithPatronymic(profile) {
+  return [profile?.name_given, profile?.name_patronymic]
+    .filter(Boolean)
+    .join(' ')
+}
+
 export function personTitleFromProfile(personProfile) {
-  return `${personProfile.name_given || '…'} ${
+  return `${givenWithPatronymic(personProfile) || '…'} ${
     personProfile.name_surname || '…'
   } ${personProfile.name_suffix || ''}`.trim()
 }
 
 export function personProfileDisplayName(profile) {
   return (
-    [profile?.name_given, profile?.name_surname].filter(Boolean).join(' ') ||
+    [givenWithPatronymic(profile), profile?.name_surname]
+      .filter(Boolean)
+      .join(' ') ||
     profile?.name ||
     ''
   )
@@ -94,9 +109,16 @@ function displaySurname(surname) {
 
 export function personDisplayName(person, options = {givenfirst: true}) {
   const suffix = person.primary_name?.suffix ?? ''
-  const given = person.primary_name?.first_name ?? '…'
+  const surnameList = person.primary_name?.surname_list
+  const patronymic = surnameList?.find(isPatronymic)
+  const given = [person.primary_name?.first_name ?? '…', patronymic?.surname]
+    .filter(Boolean)
+    .join(' ')
   const surname =
-    person.primary_name?.surname_list?.map(displaySurname)?.join(' ') ?? '…'
+    surnameList
+      ?.filter(s => s !== patronymic)
+      ?.map(displaySurname)
+      ?.join(' ') ?? '…'
   return options.givenfirst
     ? `${given} ${surname} ${suffix}`.trim()
     : `${surname}, ${given} ${suffix}`.trim()

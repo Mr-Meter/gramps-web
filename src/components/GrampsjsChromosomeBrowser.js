@@ -7,7 +7,11 @@ import {schemeSet1} from 'd3-scale-chromatic'
 import {sharedStyles} from '../SharedStyles.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
 import {ChromosomeBrowser} from '../charts/ChromosomeBrowser.js'
-import {clickKeyHandler, personDisplayName} from '../util.js'
+import {
+  clickKeyHandler,
+  givenWithPatronymic,
+  personDisplayName,
+} from '../util.js'
 
 class GrampsjsChromosomeBrowser extends GrampsjsAppStateMixin(LitElement) {
   static get styles() {
@@ -180,7 +184,10 @@ class GrampsjsChromosomeBrowser extends GrampsjsAppStateMixin(LitElement) {
               obj.ancestor_profiles?.length
                 ? `${this._('Common ancestors')}: ${obj.ancestor_profiles
                     .map(
-                      profile => `${profile.name_given} ${profile.name_surname}`
+                      profile =>
+                        `${givenWithPatronymic(profile)} ${
+                          profile.name_surname
+                        }`
                     )
                     .join(', ')}<br/>`
                 : ''

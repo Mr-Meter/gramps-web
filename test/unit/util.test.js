@@ -4,6 +4,8 @@ import {
   translate,
   personTitleFromProfile,
   personDisplayName,
+  isPatronymic,
+  givenWithPatronymic,
   reportSelectItemLabel,
   reportSelectItemValue,
   familyTitleFromProfile,
@@ -66,6 +68,16 @@ describe('personTitleFromProfile', () => {
     ).to.equal('John Smith')
   })
 
+  it('includes the patronymic', () => {
+    expect(
+      personTitleFromProfile({
+        name_given: 'Пётр',
+        name_patronymic: 'Петрович',
+        name_surname: 'Никулин',
+      })
+    ).to.equal('Пётр Петрович Никулин')
+  })
+
   it('uses ellipsis for missing given name', () => {
     expect(personTitleFromProfile({name_surname: 'Smith'})).to.equal('… Smith')
   })
@@ -106,6 +118,64 @@ describe('personDisplayName', () => {
 
   it('handles missing primary_name gracefully', () => {
     expect(personDisplayName({})).to.equal('… …')
+  })
+
+  it('puts the patronymic after the given name', () => {
+    const russian = {
+      primary_name: {
+        first_name: 'Пётр',
+        surname_list: [
+          {prefix: '', surname: 'Никулин', connector: ''},
+          {
+            prefix: '',
+            surname: 'Петрович',
+            connector: '',
+            origintype: 'Patronymic',
+            primary: false,
+          },
+        ],
+        suffix: '',
+      },
+    }
+    expect(personDisplayName(russian)).to.equal('Пётр Петрович Никулин')
+    expect(personDisplayName(russian, {givenfirst: false})).to.equal(
+      'Никулин, Пётр Петрович'
+    )
+  })
+})
+
+describe('isPatronymic', () => {
+  it('accepts a non-primary surname of origin Patronymic', () => {
+    expect(isPatronymic({origintype: 'Patronymic', primary: false})).to.equal(
+      true
+    )
+  })
+
+  it('rejects a primary patronymic and other origins', () => {
+    expect(isPatronymic({origintype: 'Patronymic', primary: true})).to.equal(
+      false
+    )
+    expect(isPatronymic({origintype: 'Patronymic'})).to.equal(false)
+    expect(isPatronymic({origintype: 'Matronymic', primary: false})).to.equal(
+      false
+    )
+    expect(isPatronymic(undefined)).to.equal(false)
+  })
+})
+
+describe('givenWithPatronymic', () => {
+  it('appends the patronymic to the given name', () => {
+    expect(
+      givenWithPatronymic({name_given: 'Пётр', name_patronymic: 'Петрович'})
+    ).to.equal('Пётр Петрович')
+  })
+
+  it('works without one of them', () => {
+    expect(givenWithPatronymic({name_given: 'Пётр'})).to.equal('Пётр')
+    expect(givenWithPatronymic({name_patronymic: 'Петрович'})).to.equal(
+      'Петрович'
+    )
+    expect(givenWithPatronymic(undefined)).to.equal('')
   })
 })
 

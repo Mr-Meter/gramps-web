@@ -5,6 +5,7 @@ import './GrampsjsFormEditName.js'
 import './GrampsjsObjectForm.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
 import {sharedStyles} from '../SharedStyles.js'
+import {isPatronymic} from '../util.js'
 
 export class GrampsjsName extends GrampsjsAppStateMixin(LitElement) {
   static get styles() {
@@ -79,10 +80,12 @@ export class GrampsjsName extends GrampsjsAppStateMixin(LitElement) {
                 surname => html`
                   <div>
                     <dt>
-                      ${this._('Surname')}
-                      ${surname.origintype
-                        ? html`(${this._(surname.origintype)})`
-                        : ''}
+                      ${isPatronymic(surname)
+                        ? this._('Patronymic')
+                        : html`${this._('Surname')}
+                          ${surname.origintype
+                            ? html`(${this._(surname.origintype)})`
+                            : ''}`}
                     </dt>
                     <dd>
                       ${surname.prefix} ${surname.surname} ${surname.connector}

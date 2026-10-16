@@ -5,11 +5,15 @@ import {select} from 'd3-selection'
 import {scaleSequential} from 'd3-scale'
 import {interpolateWarm} from 'd3-scale-chromatic'
 import {getThumbnailUrl, getThumbnailUrlCropped} from '../api.js'
-import {chartNameDisplayFormat, normalizeRect} from '../util.js'
+import {
+  chartNameDisplayFormat,
+  givenWithPatronymic,
+  normalizeRect,
+} from '../util.js'
 
 // Returns the name of a person profile in a chart name display format
 export function formatChartName(profile, nameDisplayFormat) {
-  const given = profile?.name_given || '…'
+  const given = givenWithPatronymic(profile) || '…'
   const surname = profile?.name_surname || '…'
   return nameDisplayFormat === chartNameDisplayFormat.givenThenSurname
     ? `${given} ${surname}`

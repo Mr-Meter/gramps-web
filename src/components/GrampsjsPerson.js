@@ -16,7 +16,7 @@ import './GrampsjsImg.js'
 import './GrampsjsEditGender.js'
 import './GrampsjsPersonRelationship.js'
 import './GrampsjsFormExternalSearch.js'
-import {fireEvent, objectIconPath} from '../util.js'
+import {fireEvent, givenWithPatronymic, objectIconPath} from '../util.js'
 
 export class GrampsjsPerson extends GrampsjsObject {
   static get styles() {
@@ -102,6 +102,7 @@ export class GrampsjsPerson extends GrampsjsObject {
       return ''
     }
     const surname = this.data.profile.name_surname || '…'
+    const patronymic = this.data.profile.name_patronymic || ''
     const suffix = this.data.profile.name_suffix || ''
     const call = this.data?.primary_name?.call
     let given = this.data.profile.name_given || call || '…'
@@ -116,7 +117,7 @@ export class GrampsjsPerson extends GrampsjsObject {
             ${given.substring(callIndex + call.length)}
           `
         : given
-    return html`${given} ${surname} ${suffix}`
+    return html`${given} ${patronymic} ${surname} ${suffix}`
   }
 
   _renderBirth() {
@@ -367,7 +368,7 @@ export class GrampsjsPerson extends GrampsjsObject {
       }
       const isRelated = !familyEventHandles.has(te.handle)
       const personName = isRelated
-        ? [te.person?.name_given, te.person?.name_surname]
+        ? [givenWithPatronymic(te.person), te.person?.name_surname]
             .filter(Boolean)
             .join(' ')
         : ''

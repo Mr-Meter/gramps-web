@@ -4,7 +4,7 @@ import '@material/web/iconbutton/icon-button.js'
 
 import {mdiLinkOff, mdiLinkPlus, mdiPencil, mdiPlus} from '@mdi/js'
 
-import {fireEvent, objectIconPath} from '../util.js'
+import {fireEvent, givenWithPatronymic, objectIconPath} from '../util.js'
 import './GrampsjsIcon.js'
 import './GrampsjsObjectLink.js'
 import './GrampsjsFormEditFamily.js'
@@ -84,9 +84,9 @@ export class GrampsjsFamily extends GrampsjsObject {
 
   _renderTitle() {
     return html`
-      ${this.data?.profile?.father?.name_given || '…'}
+      ${givenWithPatronymic(this.data?.profile?.father) || '…'}
       ${this.data?.profile?.father?.name_surname || '…'} &amp;
-      ${this.data?.profile?.mother?.name_given || '…'}
+      ${givenWithPatronymic(this.data?.profile?.mother) || '…'}
       ${this.data?.profile?.mother?.name_surname || '…'}
     `
   }
@@ -164,7 +164,7 @@ export class GrampsjsFamily extends GrampsjsObject {
                 ? html`<grampsjs-object-link
                       object-type="person"
                       gramps-id="${profile.gramps_id}"
-                      >${profile.name_given || '…'}
+                      >${givenWithPatronymic(profile) || '…'}
                       ${profile.name_surname || '…'}</grampsjs-object-link
                     >
                     ${birthDate || deathDate

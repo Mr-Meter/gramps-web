@@ -1,5 +1,9 @@
 import {local, select} from 'd3-selection'
-import {chartNameDisplayFormat, fireEvent} from '../util.js'
+import {
+  chartNameDisplayFormat,
+  fireEvent,
+  givenWithPatronymic,
+} from '../util.js'
 import {
   appendAddPersonButton,
   colorAddPersonButtons,
@@ -24,6 +28,16 @@ function clipString(s, length) {
     return ''
   }
   return `${s.slice(0, nChar - 2)}…`
+}
+
+// Given name followed by the patronymic, which is shortened to its initial
+// when both do not fit into `length` pixels
+function givenName(p, length) {
+  const full = givenWithPatronymic(p)
+  if (!p?.name_patronymic || clipString(full, length) === full) {
+    return full || '…'
+  }
+  return `${p.name_given || '…'} ${p.name_patronymic[0]}.`
 }
 
 function isHoverDevice() {
@@ -74,17 +88,18 @@ export function appendPersonCard(
 
   const surnameFirst =
     nameDisplayFormat === chartNameDisplayFormat.surnameThenGiven
-  const hasName = p => p?.name_given || p?.name_surname
+  const hasName = p => p?.name_given || p?.name_patronymic || p?.name_surname
   const lines = [
     {
       show: hasName,
-      text: p =>
-        surnameFirst ? `${p.name_surname || '…'},` : p.name_given || '…',
+      text: (p, length) =>
+        surnameFirst ? `${p.name_surname || '…'},` : givenName(p, length),
       weight: 500,
     },
     {
       show: hasName,
-      text: p => (surnameFirst ? p.name_given || '…' : p.name_surname || '…'),
+      text: (p, length) =>
+        surnameFirst ? givenName(p, length) : p.name_surname || '…',
       weight: 500,
     },
     {show: p => p?.birth?.date, text: p => `*${p.birth.date}`, weight: 350},
@@ -100,7 +115,10 @@ export function appendPersonCard(
       .attr('font-weight', line.weight)
       .attr('fill', palette.text)
       .attr('paint-order', 'stroke')
-      .text(d => clipString(line.text(profile(d)), boxWidth - textPadding(d)))
+      .text(d => {
+        const length = boxWidth - textPadding(d)
+        return clipString(line.text(profile(d), length), length)
+      })
   })
 
   nodes

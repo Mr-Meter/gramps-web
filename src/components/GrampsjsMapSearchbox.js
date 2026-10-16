@@ -21,7 +21,12 @@ import './GrampsjsMapFilters.js'
 import {classMap} from 'lit/directives/class-map.js'
 import {sharedStyles} from '../SharedStyles.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
-import {debounce, fireEvent, objectDetail} from '../util.js'
+import {
+  debounce,
+  fireEvent,
+  givenWithPatronymic,
+  objectDetail,
+} from '../util.js'
 
 const PANEL_EMPTY = 'empty'
 const PANEL_RESULTS = 'results'
@@ -517,7 +522,10 @@ class GrampsjsMapSearchbox extends GrampsjsAppStateMixin(LitElement) {
     if (obj.object_type === TYPE_PERSON) {
       return {
         label:
-          [obj.object?.profile?.name_given, obj.object?.profile?.name_surname]
+          [
+            givenWithPatronymic(obj.object?.profile),
+            obj.object?.profile?.name_surname,
+          ]
             .filter(Boolean)
             .join(' ') ||
           obj.object?.profile?.name ||
