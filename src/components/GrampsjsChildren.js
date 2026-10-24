@@ -4,6 +4,7 @@ import {classMap} from 'lit/directives/class-map.js'
 import {fireEvent, givenWithPatronymic} from '../util.js'
 import {renderPersonAvatar, renderPersonDates} from './personListUtils.js'
 import {GrampsjsEditableList} from './GrampsjsEditableList.js'
+import {getSymbols} from '../symbols.js'
 import './GrampsjsFormChildRef.js'
 import './GrampsjsFormNewChild.js'
 
@@ -70,7 +71,10 @@ export class GrampsjsChildren extends GrampsjsEditableList {
         }}"
       >
         ${givenWithPatronymic(p)} ${p.name_surname || ''}
-        ${renderPersonDates(p)}
+        ${renderPersonDates(
+          p,
+          getSymbols(this.appState.settings, s => this._(s))
+        )}
         ${hasNonBirthRel
           ? html`<span slot="supporting-text">${relText}</span>`
           : ''}

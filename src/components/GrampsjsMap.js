@@ -27,6 +27,72 @@ const defaultConfig = {
 
 const {maplibregl} = window
 
+// OpenHistoricalMap name locales for Gramps languages whose code is not an
+// OpenHistoricalMap name suffix, most specific first. The suffixes are OSM
+// tags, with lowercase regions (name_pt-br) and fallbacks to the base
+// language. Other Gramps languages use their code as is.
+const OHM_NAME_LOCALES = {
+  de_AT: ['de-at', 'de'],
+  en_GB: ['en-gb', 'en'],
+  nb: ['nb', 'no'],
+  nn: ['nn', 'no'],
+  pt_BR: ['pt-br', 'pt'],
+  pt_PT: ['pt-pt', 'pt'],
+  zh_CN: ['zh-hans', 'zh-cn', 'zh'],
+  zh_HK: ['zh-hk', 'zh-hant', 'zh'],
+  zh_TW: ['zh-hant', 'zh-tw', 'zh'],
+}
+
+// Returns the OpenHistoricalMap name locales for a Gramps language code.
+export function getOhmNameLocales(lang) {
+  return OHM_NAME_LOCALES[lang] ?? [lang]
+}
+
+// OpenFreeMap name locales for Gramps languages whose code is not an
+// OpenFreeMap name suffix. The tiles have names in a fixed set of languages
+// without regional variants (name:pt, name:zh-Hans). Other Gramps languages
+// use their code as is.
+const BASE_NAME_LOCALES = {
+  de_AT: ['de'],
+  en_GB: ['en'],
+  nb: ['no'],
+  nn: ['no'],
+  pt_BR: ['pt'],
+  pt_PT: ['pt'],
+  zh_CN: ['zh-Hans', 'zh'],
+  zh_HK: ['zh-Hant', 'zh'],
+  zh_TW: ['zh-Hant', 'zh'],
+}
+
+// Returns the OpenFreeMap name locales for a Gramps language code.
+export function getBaseNameLocales(lang) {
+  return BASE_NAME_LOCALES[lang] ?? [lang]
+}
+
+// Whether an expression reads a name property such as name, name_en or
+// name:latin.
+function readsName(expression) {
+  if (!Array.isArray(expression) || expression[0] === 'literal') return false
+  if (expression[0] === 'get') return /^name([:_]|$)/.test(expression[1])
+  return expression.slice(1).some(readsName)
+}
+
+// Returns a copy of an OpenFreeMap style with labels in the given locales.
+// The style's own labels prefer English names, so each label reading a name
+// is reset to the local name, which Diplomat then localizes.
+export function localizeBaseStyle(style, locales) {
+  const localized = structuredClone(style)
+  localized.layers.forEach(layer => {
+    if (readsName(layer.layout?.['text-field'])) {
+      // eslint-disable-next-line no-param-reassign
+      layer.layout['text-field'] = ['get', 'name']
+    }
+    Diplomat.prepareLayer(layer)
+  })
+  Diplomat.localizeLayers(localized.layers, locales)
+  return localized
+}
+
 // Returns a copy of an OpenHistoricalMap style with labels in the given
 // locales.
 export function localizeOhmStyle(style, locales) {
@@ -75,6 +141,8 @@ class GrampsjsMap extends GrampsjsAppStateMixin(LitElement) {
           color: var(--md-sys-color-on-surface);
           box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
           white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .grampsjs-place-tooltip .maplibregl-popup-tip {
           border-top-color: var(
@@ -167,14 +235,39 @@ class GrampsjsMap extends GrampsjsAppStateMixin(LitElement) {
     super.connectedCallback()
     this._mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     this._mediaQuery.addEventListener('change', this._onThemeChange)
+    // A map removed on disconnect is created again on reconnect.
+    if (this.hasUpdated && !this._map) {
+      this._createMap()
+      this._syncStyle()
+    }
   }
 
   disconnectedCallback() {
     this._mediaQuery?.removeEventListener('change', this._onThemeChange)
     super.disconnectedCallback()
+    // Frees the WebGL context once the slotted layers, which are disconnected
+    // after this element, have removed themselves from the map. An element
+    // that is only moved is connected again by then and keeps its map.
+    queueMicrotask(() => {
+      if (!this.isConnected) this._removeMap()
+    })
   }
 
   firstUpdated() {
+    this._createMap()
+  }
+
+  _removeMap() {
+    if (!this._map) return
+    this._map.remove()
+    this._map = undefined
+    this._mapInitialLoadFired = false
+    this._appliedStyle = undefined
+    this._appliedKey = undefined
+    this._pendingKey = undefined
+  }
+
+  _createMap() {
     const mapel = this.shadowRoot.getElementById(this.mapid)
     // The style is set by _syncStyle, from updated().
     this._map = new maplibregl.Map({
@@ -334,9 +427,15 @@ class GrampsjsMap extends GrampsjsAppStateMixin(LitElement) {
     return Boolean(this._map?.style && this._map.isStyleLoaded())
   }
 
-  get _locales() {
+  // The name locales of the Gramps language in the given style. Without
+  // browser locales, a place lacking a name in the Gramps language shows its
+  // local name.
+  _getLocales(style) {
     const lang = this.appState?.i18n?.lang
-    return lang ? [lang, ...Diplomat.getLocales()] : Diplomat.getLocales()
+    if (!lang) return Diplomat.getLocales()
+    return style === MAP_STYLE_OHM
+      ? getOhmNameLocales(lang)
+      : getBaseNameLocales(lang)
   }
 
   _handleLayerChange(e) {
@@ -370,7 +469,7 @@ class GrampsjsMap extends GrampsjsAppStateMixin(LitElement) {
     const style =
       this.mapStyle === MAP_STYLE_OHM ? MAP_STYLE_OHM : MAP_STYLE_BASE
     const url = this._getStyleUrl(style)
-    const locales = style === MAP_STYLE_OHM ? this._locales : []
+    const locales = this._getLocales(style)
     const key = `${url} ${locales.join(',')}`
     if (key === this._appliedKey) {
       this._pendingKey = undefined
@@ -394,7 +493,7 @@ class GrampsjsMap extends GrampsjsAppStateMixin(LitElement) {
     json =
       style === MAP_STYLE_OHM
         ? localizeOhmStyle(json, locales)
-        : structuredClone(json)
+        : localizeBaseStyle(json, locales)
     // Layers add themselves on the first load; later styles keep them.
     const contributors = this._appliedKey
       ? this._slottedChildren.filter(

@@ -3,10 +3,18 @@ import {select} from 'd3-selection'
 import {zoom, zoomIdentity, zoomTransform} from 'd3-zoom'
 import {TreeChart} from '../../src/charts/TreeChart.js'
 import {FamilyGraph} from '../../src/charts/model/FamilyGraph.js'
-import {layoutAncestors} from '../../src/charts/layout/treeLayout.js'
+import {
+  layoutAncestors,
+  layoutDescendants,
+} from '../../src/charts/layout/treeLayout.js'
 import {chartNameDisplayFormat} from '../../src/util.js'
 import {chartPalette} from '../../src/charts/palette.js'
-import {mdiChevronLeft, mdiChevronRight} from '@mdi/js'
+import {
+  mdiChevronDown,
+  mdiChevronLeft,
+  mdiChevronRight,
+  mdiChevronUp,
+} from '@mdi/js'
 
 const family = (handle, father, mother, children) => ({
   handle,
@@ -147,10 +155,17 @@ describe('TreeChart', () => {
     expect(triangle().getAttribute('transform')).toBe('translate(-127,0)')
     expect(shape().getAttribute('d')).toBe(mdiChevronLeft)
     const element = triangle()
-    chart.update(layout, {...size, childrenTriangle: true, orientation: 'RTL'})
+    chart.update(layout, {...size, childrenTriangle: true, menuSide: 'right'})
     expect(triangle()).toBe(element)
     expect(triangle().getAttribute('transform')).toBe('translate(123,0)')
     expect(shape().getAttribute('d')).toBe(mdiChevronRight)
+    // 8px from the box above and below
+    chart.update(layout, {...size, childrenTriangle: true, menuSide: 'bottom'})
+    expect(triangle().getAttribute('transform')).toBe('translate(0,73)')
+    expect(shape().getAttribute('d')).toBe(mdiChevronDown)
+    chart.update(layout, {...size, childrenTriangle: true, menuSide: 'top'})
+    expect(triangle().getAttribute('transform')).toBe('translate(0,-73)')
+    expect(shape().getAttribute('d')).toBe(mdiChevronUp)
     chart.update(layout, size)
     expect(triangle()).toBeNull()
   })
@@ -183,7 +198,7 @@ describe('TreeChart', () => {
     expect(triangle.getAttribute('role')).toBe('button')
     expect(triangle.getAttribute('tabindex')).toBe('0')
     expect(triangle.getAttribute('aria-label')).toBe('Children')
-    expect(Number(triangle.querySelector('circle').getAttribute('r'))).toBe(20)
+    expect(Number(triangle.querySelector('.shade').getAttribute('r'))).toBe(20)
     let opened = 0
     chart.node.addEventListener('pedigree:show-children', () => {
       opened += 1
@@ -360,12 +375,15 @@ describe('TreeChart', () => {
     const layout = layoutAncestors(graph, 'R', {depth: 3})
     chart.update(layout, {...size, canEdit: true, childrenTriangle: true})
     const root = nodeWithKey(chart, 'p')
-    expect(root.style.filter).toContain('drop-shadow')
+    const card = root.querySelector('.person-card')
+    // Only the card has a shadow, its buttons do not
+    expect(card.style.filter).toContain('drop-shadow')
+    expect(root.style.filter).toBe('')
     chart.update(layout, {...size, childrenTriangle: true, interactive: false})
     expect(
       chart.node.querySelectorAll('.add-person-btn, #triangle-children')
     ).toHaveLength(0)
-    expect(root.style.filter).toBe('')
+    expect(card.style.filter).toBe('')
     expect(root.style.cursor).toBe('')
     const selected = []
     root.addEventListener('pedigree:person-selected', e =>
@@ -373,6 +391,122 @@ describe('TreeChart', () => {
     )
     root.dispatchEvent(new MouseEvent('click', {bubbles: true}))
     expect(selected).toEqual([])
+  })
+
+  describe('expand buttons', () => {
+    const expandLabels = {ancestors: 'Parents', descendants: 'Children'}
+    const buttonOf = (chart, key) =>
+      nodeWithKey(chart, key).querySelector('.expand-button')
+
+    it('draws a labelled button where a branch grows', () => {
+      const chart = new TreeChart()
+      chart.update(layoutAncestors(graph, 'R', {depth: 2}), {
+        ...size,
+        expandLabels,
+      })
+      // M has no parents
+      expect(chart.node.querySelectorAll('.expand-button')).toHaveLength(1)
+      const button = buttonOf(chart, 'pf')
+      expect(button.getAttribute('role')).toBe('button')
+      expect(button.getAttribute('tabindex')).toBe('0')
+      expect(button.getAttribute('aria-label')).toBe('Parents')
+      // Beyond the card like the menu button
+      expect(button.getAttribute('transform')).toBe('translate(123,0)')
+      expect(button.querySelector('path').getAttribute('d')).toBe(
+        mdiChevronRight
+      )
+      chart.update(layoutAncestors(graph, 'R', {depth: 2, vertical: true}), {
+        ...size,
+        expandLabels,
+      })
+      expect(buttonOf(chart, 'pf').getAttribute('transform')).toBe(
+        'translate(0,-73)'
+      )
+      expect(
+        buttonOf(chart, 'pf').querySelector('path').getAttribute('d')
+      ).toBe(mdiChevronUp)
+    })
+
+    it('fades lines under the chevron with the background colour', () => {
+      const chart = new TreeChart()
+      chart.update(layoutAncestors(graph, 'R', {depth: 2}), size)
+      const backdrop = buttonOf(chart, 'pf').querySelector('.backdrop')
+      expect(backdrop.getAttribute('fill')).toBe(chartPalette.background)
+      expect(backdrop.getAttribute('fill-opacity')).toBe('0.8')
+    })
+
+    it('has no button on an expanded branch', () => {
+      const chart = new TreeChart()
+      chart.update(
+        layoutAncestors(graph, 'R', {depth: 2, expanded: new Set(['F'])}),
+        size
+      )
+      expect(chart.node.querySelectorAll('.expand-button')).toHaveLength(0)
+    })
+
+    it('gives the root person both the menu and the expand button', () => {
+      const chart = new TreeChart()
+      chart.update(layoutDescendants(graph, 'F', {depth: 1}), {
+        ...size,
+        childrenTriangle: true,
+        menuSide: 'right',
+        expandLabels,
+      })
+      const root = nodeWithKey(chart, 'p')
+      expect(root.querySelectorAll('.children-triangle')).toHaveLength(1)
+      const button = root.querySelector('.expand-button')
+      expect(button.getAttribute('transform')).toBe('translate(-127,0)')
+      expect(button.getAttribute('aria-label')).toBe('Children')
+    })
+
+    it('expands the branch by click or keyboard without selecting the person', () => {
+      const chart = new TreeChart()
+      chart.update(layoutAncestors(graph, 'R', {depth: 2}), size)
+      const expanded = []
+      const selected = []
+      chart.node.addEventListener('pedigree:expand-branch', e =>
+        expanded.push(e.detail)
+      )
+      chart.node.addEventListener('pedigree:person-selected', e =>
+        selected.push(e.detail)
+      )
+      const button = buttonOf(chart, 'pf')
+      button.dispatchEvent(new MouseEvent('click', {bubbles: true}))
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})
+      )
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', {key: 'a', bubbles: true})
+      )
+      const detail = {handle: 'F', direction: 'ancestors'}
+      expect(expanded).toEqual([detail, detail])
+      expect(selected).toEqual([])
+    })
+
+    it('shows the preview only on the card, not on its buttons', () => {
+      const chart = new TreeChart()
+      chart.update(layoutAncestors(graph, 'R', {depth: 2}), size)
+      const previews = []
+      const listener = e => previews.push(e.detail.grampsId)
+      window.addEventListener('object:preview-show', listener)
+      const node = nodeWithKey(chart, 'pf')
+      node.dispatchEvent(new MouseEvent('mouseenter'))
+      buttonOf(chart, 'pf').dispatchEvent(new MouseEvent('mouseenter'))
+      node
+        .querySelector('.person-card')
+        .dispatchEvent(new MouseEvent('mouseenter'))
+      window.removeEventListener('object:preview-show', listener)
+      expect(previews).toEqual(['I_F'])
+    })
+
+    it('leaves out expand buttons when not interactive', () => {
+      const chart = new TreeChart()
+      const layout = layoutAncestors(graph, 'R', {depth: 2})
+      chart.update(layout, size)
+      expect(chart.node.querySelectorAll('.expand-button')).toHaveLength(1)
+      chart.update(layout, {...size, interactive: false})
+      expect(chart.node.querySelectorAll('.expand-button')).toHaveLength(0)
+    })
   })
 
   it('takes link, triangle and card colours from the palette', () => {
@@ -395,6 +529,151 @@ describe('TreeChart', () => {
     expect(box().getAttribute('fill')).toBe('white')
     chart.update(layout, {...size, palette: {...palette, personBox: 'ivory'}})
     expect(box().getAttribute('fill')).toBe('ivory')
+  })
+
+  it('draws links at right angles, rounded where they turn to outer people', () => {
+    const chart = new TreeChart()
+    const layout = layoutAncestors(graph, 'R', {depth: 3})
+    chart.update(layout, size)
+    const paths = new Map(
+      [...chart.node.querySelectorAll('path.link')].map(path => [
+        path.__data__.target.handle,
+        path.getAttribute('d'),
+      ])
+    )
+    expect([...paths.keys()].sort()).toEqual(['F', 'FM', 'M'])
+    for (const d of paths.values()) {
+      // Straight lines and rounded corners only
+      expect(d).toMatch(/^M[-\d.,MHVLQ ]+$/)
+    }
+    // R's parents lie above and below R; FM lies straight across from F
+    expect(paths.get('F')).toMatch(/Q/)
+    expect(paths.get('M')).toMatch(/Q/)
+    expect(paths.get('FM')).not.toMatch(/Q/)
+  })
+
+  it('draws each part of the lines that links share once', () => {
+    // P has the children A, B and C
+    const fP = family('fP', 'P', '', ['A', 'B', 'C'])
+    const parent = new FamilyGraph([
+      person('P', {families: [fP]}),
+      ...['A', 'B', 'C'].map(handle => person(handle, {parentFamily: fP})),
+    ])
+    const chart = new TreeChart()
+    chart.update(layoutDescendants(parent, 'P', {depth: 2}), size)
+    const paths = new Map(
+      [...chart.node.querySelectorAll('path.link')].map(path => [
+        path.__data__.target.handle,
+        path.getAttribute('d'),
+      ])
+    )
+    const start = handle => /^M([^,]+)/.exec(paths.get(handle))[1]
+    // Only the link to the top child, A, draws the stem from P's card; the
+    // others start at the bar
+    expect(start('B')).toBe(start('C'))
+    expect(start('A')).not.toBe(start('B'))
+    // The outer links draw the bar, rounded into their child, and the link
+    // to the middle child only the line from the bar
+    expect(paths.get('A')).toMatch(/Q/)
+    expect(paths.get('C')).toMatch(/Q/)
+    expect(paths.get('B')).toMatch(/^M[^A-Z]+L[^A-Z]+$/)
+  })
+
+  it('dashes the lines that lead to children who are not birth children only', () => {
+    // P adopted A and has the birth children B, C and D; A and B lie above
+    // P, C and D below
+    const fP = {
+      handle: 'fP',
+      father_handle: 'P',
+      mother_handle: '',
+      child_ref_list: [
+        {ref: 'A', frel: 'Adopted', mrel: 'Birth'},
+        ...['B', 'C', 'D'].map(ref => ({ref, frel: 'Birth', mrel: 'Birth'})),
+      ],
+    }
+    const parent = new FamilyGraph([
+      person('P', {families: [fP]}),
+      ...['A', 'B', 'C', 'D'].map(handle => person(handle, {parentFamily: fP})),
+    ])
+    const chart = new TreeChart()
+    chart.update(layoutDescendants(parent, 'P', {depth: 2}), size)
+    const links = new Map(
+      [...chart.node.querySelectorAll('path.link')].map(path => [
+        path.__data__.target.handle,
+        path,
+      ])
+    )
+    const dashed = handle =>
+      links.get(handle).getAttribute('stroke-dasharray') !== null
+    expect(['A', 'B', 'C', 'D'].map(dashed)).toEqual([
+      true,
+      false,
+      false,
+      false,
+    ])
+    // B draws the bar from the stem, and A only the part beyond B
+    const y = handle => links.get(handle).__data__.target.y
+    const start = handle =>
+      /^M[^,]+,([^A-Z]+)/.exec(links.get(handle).getAttribute('d'))[1]
+    expect(Number(start('A'))).toBeCloseTo(y('B'))
+  })
+
+  it('dashes the line to an adoptive parent in an ancestor chart', () => {
+    // R is the adopted child of F and the birth child of M
+    const fAdopted = {
+      ...fR,
+      child_ref_list: [{ref: 'R', frel: 'Adopted', mrel: 'Birth'}],
+    }
+    const adopted = new FamilyGraph([
+      person('R', {parentFamily: fAdopted}),
+      person('F', {families: [fAdopted]}),
+      person('M', {families: [fAdopted]}),
+    ])
+    const chart = new TreeChart()
+    chart.update(layoutAncestors(adopted, 'R', {depth: 2}), size)
+    const dashes = Object.fromEntries(
+      [...chart.node.querySelectorAll('path.link')].map(path => [
+        path.__data__.target.handle,
+        path.getAttribute('stroke-dasharray'),
+      ])
+    )
+    expect(dashes).toEqual({F: '6 4', M: null})
+  })
+
+  it('draws links between rows in a vertical chart', () => {
+    const chart = new TreeChart()
+    chart.update(layoutAncestors(graph, 'R', {depth: 2, vertical: true}), size)
+    const paths = Object.fromEntries(
+      [...chart.node.querySelectorAll('path.link')].map(path => [
+        path.__data__.target.handle,
+        path.getAttribute('d'),
+      ])
+    )
+    // The stem goes up from 10px inside R's card to the middle of the gap,
+    // where the bar to F and M runs
+    expect(paths.F).toMatch(/^M0,-35L0,-65L/)
+    expect(paths.M).toMatch(/^M0,-65L/)
+  })
+
+  it('fades the links when the chart turns between columns and rows', () => {
+    const chart = new TreeChart()
+    const links = () => [...chart.node.querySelectorAll('path.link')]
+    chart.update(layoutAncestors(graph, 'R', {depth: 2}), size)
+    const columns = links()
+    chart.update(layoutAncestors(graph, 'R', {depth: 2, vertical: true}), {
+      ...size,
+      duration: 100,
+    })
+    const rows = links().filter(path => !columns.includes(path))
+    expect(rows).toHaveLength(2)
+    expect(rows.every(path => path.style.opacity === '0')).toBe(true)
+    // A new layout in rows moves the same links
+    chart.update(layoutAncestors(graph, 'R', {depth: 2, vertical: true}), {
+      ...size,
+      duration: 100,
+    })
+    expect(links().filter(path => rows.includes(path))).toHaveLength(2)
+    select(chart.node).selectAll('*').interrupt()
   })
 
   it('clears people and links but keeps the zoom', () => {

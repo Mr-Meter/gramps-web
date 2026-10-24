@@ -45,6 +45,26 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
           inset: 0;
         }
 
+        .profile-picture-badge {
+          position: absolute;
+          top: 4px;
+          left: 4px;
+          right: 4px;
+          width: fit-content;
+          max-width: calc(100% - 8px);
+          box-sizing: border-box;
+          padding: 4px 8px;
+          border-radius: var(--md-sys-shape-corner-small, 8px);
+          background: var(--md-sys-color-secondary-container);
+          color: var(--md-sys-color-on-secondary-container);
+          font-size: var(--md-sys-typescale-label-medium-size, 12px);
+          line-height: var(--md-sys-typescale-label-medium-line-height, 16px);
+          font-weight: var(--md-sys-typescale-label-medium-weight, 500);
+          letter-spacing: 0.5px;
+          overflow-wrap: anywhere;
+          pointer-events: none;
+        }
+
         .tile-overlay {
           position: absolute;
           bottom: 4px;
@@ -74,7 +94,7 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
       media: {type: Array},
       dialogContent: {type: String},
       edit: {type: Boolean},
-      editRect: {type: Boolean},
+      profilePicture: {type: Boolean},
       _lightboxSelected: {type: Number},
     }
   }
@@ -84,7 +104,7 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
     this.mediaRef = []
     this.media = []
     this.edit = false
-    this.editRect = false
+    this.profilePicture = false
     this.dialogContent = ''
     this._lightboxSelected = 0
   }
@@ -98,13 +118,13 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
       ${this.edit
         ? html`
             <div class="edit-actions">
-              <md-icon-button @click="${this._handleShareClick}">
+              <md-icon-button @click="${this.openMediaRef}">
                 <grampsjs-icon
                   path="${mdiLinkPlus}"
                   color="var(--mdc-theme-secondary)"
                 ></grampsjs-icon>
               </md-icon-button>
-              <md-icon-button @click="${this._handleAddClick}">
+              <md-icon-button @click="${this.openNewMedia}">
                 <grampsjs-icon
                   path="${mdiPlus}"
                   color="var(--mdc-theme-secondary)"
@@ -116,13 +136,11 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
 
       <grampsjs-view-media-lightbox
         active
-        ?editRect="${this.editRect}"
         id="gallery-lightbox-view"
         @lightbox:left="${this._handleLeft}"
         @lightbox:right="${this._handleRight}"
         @rect:clicked="${this._handleRectClick}"
         handle="${this.media[this._lightboxSelected]?.handle}"
-        .index="${this._lightboxSelected}"
         ?hideLeftArrow="${this._lightboxSelected === 0}"
         ?hideRightArrow="${this._lightboxSelected === this.media.length - 1}"
         .appState="${this.appState}"
@@ -147,6 +165,11 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
           checksum="${checksum}"
           @click="${() => this._handleClick(i)}"
         ></grampsjs-img>
+        ${this.edit && this.profilePicture && i === 0
+          ? html`<span class="profile-picture-badge"
+              >${this._('Profile picture')}</span
+            >`
+          : ''}
         ${this.edit
           ? html`
               <div class="tile-overlay">
@@ -248,7 +271,8 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
     fireEvent(this, 'edit:action', {action: 'downMediaRef', index})
   }
 
-  _handleAddClick() {
+  openNewMedia() {
+    if (!this.edit) return
     this.dialogContent = html`
       <grampsjs-form-new-media
         @object:save="${this._handleNewMediaSave}"
@@ -259,7 +283,8 @@ export class GrampsjsGallery extends GrampsjsAppStateMixin(LitElement) {
     `
   }
 
-  _handleShareClick() {
+  openMediaRef() {
+    if (!this.edit) return
     this.dialogContent = html`
       <grampsjs-form-mediaref
         new

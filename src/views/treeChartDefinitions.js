@@ -16,14 +16,20 @@ import {chartNameDisplayFormat, menuSelectionHandler} from '../util.js'
 // A chart definition describes one chart of the tree view:
 // - `settings`: the settings in the settings dialog. Each is stored in the
 //   user settings under `key` and has a `name` in the setting values, a
-//   `label`, a `type` ('number' or 'nameDisplayFormat') and a `default`.
+//   `label`, a `type` and a `default`. A 'number' setting can have a `min`;
+//   a 'select' setting has `options`, each with a `value` and a `label`.
 // - `editable`: whether people can be added to the chart in edit mode.
 // - `zoomable`: whether the chart has zoom and pan controls and keys.
-// - `request(grampsId, values)`: the filter rules and extensions of the
-//   people the chart needs.
-// - `render({grampsId, values, data, canEdit, appState, state})`: the chart
-//   component. `state` holds options that are not stored, such as the fan
-//   chart colour.
+// - `exportable`: whether the chart can be downloaded as an SVG file. Its
+//   component returns the file from `svgDocument()`.
+// - `request(grampsId, values, branches)`: the filter rules and extensions
+//   of the people the chart needs. In tree charts, `branches` lists the
+//   people whose branches show one more generation, each with its `grampsId`
+//   and `direction`, 'ancestors' or 'descendants'.
+// - `render({grampsId, values, data, canEdit, appState, state, expanded})`:
+//   the chart component. `state` holds options that are not stored, such as
+//   the fan chart colour, and `expanded` the handles of the people whose
+//   branches show one more generation.
 // - `renderControls(view)`, optional: controls after the common ones.
 //
 // Generation settings count the generations beyond the selected person.
@@ -32,18 +38,37 @@ import {chartNameDisplayFormat, menuSelectionHandler} from '../util.js'
 
 const treeExtend = 'event_ref_list,primary_parent_family,family_list'
 
-function treeRules(grampsId, ancestorGenerations, descendantGenerations) {
+const ancestorRule = (grampsId, generations) => ({
+  name: 'IsLessThanNthGenerationAncestorOf',
+  values: [grampsId, generations],
+})
+
+const descendantRule = (grampsId, generations) => ({
+  name: 'IsLessThanNthGenerationDescendantOf',
+  values: [grampsId, generations],
+})
+
+// The person and their parents or children, for a branch that shows one
+// more generation
+const branchRule = ({grampsId, direction}) =>
+  direction === 'ancestors'
+    ? ancestorRule(grampsId, 2)
+    : descendantRule(grampsId, 2)
+
+// Filter rules for the ancestors and descendants of a person, and for the
+// parents or children of the people in `branches`
+function treeRules(
+  grampsId,
+  ancestorGenerations,
+  descendantGenerations,
+  branches = []
+) {
   return {
     function: 'or',
     rules: [
-      {
-        name: 'IsLessThanNthGenerationAncestorOf',
-        values: [grampsId, ancestorGenerations],
-      },
-      {
-        name: 'IsLessThanNthGenerationDescendantOf',
-        values: [grampsId, descendantGenerations],
-      },
+      ancestorRule(grampsId, ancestorGenerations),
+      descendantRule(grampsId, descendantGenerations),
+      ...branches.map(branchRule),
     ],
   }
 }
@@ -52,8 +77,30 @@ const nameDisplayFormatSetting = key => ({
   name: 'nameDisplayFormat',
   key,
   label: 'Name Display Format',
-  type: 'nameDisplayFormat',
+  type: 'select',
+  options: Object.values(chartNameDisplayFormat).map(format => ({
+    value: format,
+    label: format,
+  })),
   default: chartNameDisplayFormat.surnameThenGiven,
+})
+
+// Whether generations run in columns or in rows, with ancestors above. As
+// in Gramps, the arrows point where the chart grows: towards the ancestors,
+// or for a chart of descendants only, towards them.
+const orientationSetting = (key, {descendants = false} = {}) => ({
+  name: 'orientation',
+  key,
+  label: 'Tree direction',
+  type: 'select',
+  options: [
+    {
+      value: 'horizontal',
+      label: descendants ? 'Horizontal (←)' : 'Horizontal (→)',
+    },
+    {value: 'vertical', label: descendants ? 'Vertical (↓)' : 'Vertical (↑)'},
+  ],
+  default: 'horizontal',
 })
 
 const ancestorsSetting = (key, defaultValue) => ({
@@ -70,7 +117,7 @@ const descendantsSetting = (key, defaultValue) => ({
   key,
   label: 'Max Descendant Generations',
   type: 'number',
-  min: 0,
+  min: 1,
   default: defaultValue,
 })
 
@@ -134,6 +181,7 @@ function renderFanColorControls(view) {
       <md-menu
         id="usage-menu"
         anchor="btn-color"
+        positioning="popover"
         skip-restore-focus
         @close-menu=${menuSelectionHandler(item =>
           setColor(item.dataset.value)
@@ -155,23 +203,27 @@ export const chartDefinitions = {
   ancestor: {
     settings: [
       ancestorsSetting('treeChartAnc', 3),
+      orientationSetting('treeChartOrientation'),
       nameDisplayFormatSetting('treeChartNameDisplayFormat'),
     ],
     editable: true,
     zoomable: true,
-    request: (grampsId, {ancestors}) => ({
-      rules: treeRules(grampsId, ancestors + 1, 2),
+    exportable: true,
+    request: (grampsId, {ancestors}, branches) => ({
+      rules: treeRules(grampsId, ancestors + 1, 2, branches),
       extend: treeExtend,
     }),
-    render: ({grampsId, values, data, canEdit, appState}) => html`
+    render: ({grampsId, values, data, canEdit, appState, expanded}) => html`
       <grampsjs-tree-chart
         ancestors
         grampsId=${grampsId}
         nAnc=${values.ancestors + 1}
         nDesc="2"
+        ?vertical=${values.orientation === 'vertical'}
         nameDisplayFormat=${values.nameDisplayFormat}
         ?canEdit="${canEdit}"
         .data=${data}
+        .expanded=${expanded}
         .appState="${appState}"
       >
       </grampsjs-tree-chart>
@@ -181,23 +233,27 @@ export const chartDefinitions = {
   descendant: {
     settings: [
       descendantsSetting('descendantChartDesc', 1),
+      orientationSetting('descendantChartOrientation', {descendants: true}),
       nameDisplayFormatSetting('descendantChartNameDisplayFormat'),
     ],
     editable: true,
     zoomable: true,
-    request: (grampsId, {descendants}) => ({
-      rules: treeRules(grampsId, 2, descendants + 1),
+    exportable: true,
+    request: (grampsId, {descendants}, branches) => ({
+      rules: treeRules(grampsId, 2, descendants + 1, branches),
       extend: treeExtend,
     }),
-    render: ({grampsId, values, data, canEdit, appState}) => html`
+    render: ({grampsId, values, data, canEdit, appState, expanded}) => html`
       <grampsjs-tree-chart
         descendants
         grampsId=${grampsId}
         nAnc="2"
         nDesc=${values.descendants + 1}
+        ?vertical=${values.orientation === 'vertical'}
         nameDisplayFormat=${values.nameDisplayFormat}
         ?canEdit="${canEdit}"
         .data=${data}
+        .expanded=${expanded}
         gapX="60"
         .appState="${appState}"
       >
@@ -209,24 +265,28 @@ export const chartDefinitions = {
     settings: [
       ancestorsSetting('hourglassChartAnc', 2),
       descendantsSetting('hourglassChartDesc', 1),
+      orientationSetting('hourglassChartOrientation'),
       nameDisplayFormatSetting('hourglassChartNameDisplayFormat'),
     ],
     editable: true,
     zoomable: true,
-    request: (grampsId, {ancestors, descendants}) => ({
-      rules: treeRules(grampsId, ancestors + 1, descendants + 1),
+    exportable: true,
+    request: (grampsId, {ancestors, descendants}, branches) => ({
+      rules: treeRules(grampsId, ancestors + 1, descendants + 1, branches),
       extend: treeExtend,
     }),
-    render: ({grampsId, values, data, canEdit, appState}) => html`
+    render: ({grampsId, values, data, canEdit, appState, expanded}) => html`
       <grampsjs-tree-chart
         ancestors
         descendants
         grampsId=${grampsId}
         nAnc=${values.ancestors + 1}
         nDesc=${values.descendants + 1}
+        ?vertical=${values.orientation === 'vertical'}
         nameDisplayFormat=${values.nameDisplayFormat}
         ?canEdit="${canEdit}"
         .data=${data}
+        .expanded=${expanded}
         gapX="60"
         .appState="${appState}"
       >
@@ -248,6 +308,7 @@ export const chartDefinitions = {
     ],
     editable: true,
     zoomable: true,
+    exportable: true,
     request: (grampsId, {separation}) => ({
       rules: {
         function: 'or',
@@ -273,6 +334,8 @@ export const chartDefinitions = {
       nameDisplayFormatSetting('fanChartNameDisplayFormat'),
     ],
     editable: false,
+    zoomable: true,
+    exportable: true,
     request: (grampsId, {ancestors}) => ({
       rules: treeRules(grampsId, ancestors + 1, 2),
       extend: treeExtend,
@@ -319,16 +382,20 @@ export const chartDefinitions = {
 // the defaults
 export function chartSettingValues(definition, settings = {}) {
   return Object.fromEntries(
-    definition.settings.map(setting => [
-      setting.name,
-      settings[setting.key] ?? setting.default,
-    ])
+    definition.settings.map(setting => {
+      const value = settings[setting.key] ?? setting.default
+      // A value stored before the minimum was raised counts as the minimum
+      return [
+        setting.name,
+        setting.min === undefined ? value : Math.max(value, setting.min),
+      ]
+    })
   )
 }
 
 // Returns the API URL of the people a chart needs
-export function chartDataUrl(definition, grampsId, values, lang) {
-  const {rules, extend} = definition.request(grampsId, values)
+export function chartDataUrl(definition, grampsId, values, lang, branches) {
+  const {rules, extend} = definition.request(grampsId, values, branches)
   const filter = rules
     ? `rules=${encodeURIComponent(JSON.stringify(rules))}&`
     : ''

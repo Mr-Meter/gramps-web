@@ -2,18 +2,19 @@ import {css, html} from 'lit'
 
 import {GrampsjsView} from './GrampsjsView.js'
 import '../components/GrampsjsCollapsibleSection.js'
+import '../components/GrampsjsBackups.js'
 import '../components/GrampsjsResearcher.js'
 import '../components/GrampsjsImport.js'
 import '../components/GrampsjsImportMedia.js'
 import '../components/GrampsjsMediaFileStatus.js'
 import '../components/GrampsjsMediaStatus.js'
 import '../components/GrampsjsDeleteAll.js'
-import '../components/GrampsjsRestoreBackupConfirmDialog.js'
 import '../components/GrampsjsRelogin.js'
 import '../components/GrampsjsTaskProgressIndicator.js'
 import '../components/GrampsjsTreeQuotas.js'
 
 import {fireEvent, makeHandle} from '../util.js'
+import {dispatchErrorMessage} from '../taskResponse.js'
 import {
   TREE_CONFIG_APP_TITLE,
   TREE_CONFIG_PRIMARY_COLOR,
@@ -26,7 +27,6 @@ import {
   mdiAlertCircle,
   mdiAlertOutline,
   mdiCheckCircle,
-  mdiBackupRestore,
   mdiDeleteForever,
   mdiDownload,
   mdiPlus,
@@ -71,12 +71,6 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
     return [
       super.styles,
       css`
-        .card {
-          padding: 1em 1em;
-          border-radius: 16px;
-          background-color: var(--grampsjs-color-shade-230);
-        }
-
         .pre {
           white-space: pre-line;
         }
@@ -99,12 +93,6 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
         .danger-zone-row p.first-control {
           margin-top: 0;
           padding-top: 1.6em;
-        }
-
-        .danger-zone-row p.actions {
-          display: flex;
-          align-items: center;
-          gap: 0.4em;
         }
 
         .danger-button {
@@ -240,22 +228,14 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       _homePageNoteGrampsId: {},
       _homePageImageGrampsId: {},
       _tags: {type: Array},
-      _restoreReady: {type: Boolean},
-      _restoreUploadHint: {},
-      _restoreSummary: {type: Object},
     }
   }
 
   constructor() {
     super()
     this._userInfo = {}
-    this._restoreReady = false
-    this._restoreUploadHint = ''
-    this._restoreSummary = {}
-    // Non-reactive: which action to retry after a successful relogin, and
-    // whether the in-flight restore task is a dry run vs. a real apply.
+    // Non-reactive: the action to retry after a successful relogin.
     this._pendingAction = null
-    this._restoreDryRun = false
     this._repairResults = {}
     this._verifyResults = null
     this._verifyLoading = false
@@ -279,7 +259,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </p>
 
       <grampsjs-collapsible-section
-        title="${this._('Data')}"
+        heading="${this._('Data')}"
         description="${this._(
           'Quotas, imports, media, and storage management'
         )}"
@@ -304,7 +284,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Search index')}"
+        heading="${this._('Search index')}"
         description="${this._('Manage and rebuild the search index')}"
       >
         <h3>${this._('Manage search index')}</h3>
@@ -316,19 +296,20 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
             'Manually updating the search index is usually unnecessary, but it may become necessary after an upgrade.'
           )}
         </p>
-        <md-outlined-button
-          ?disabled=${this._buttonUpdateSearchDisabled}
-          @click="${() => this._updateSearch(false)}"
-          >${this._('Update search index')}</md-outlined-button
-        >
-        <grampsjs-task-progress-indicator
-          class="button"
-          id="progress-update-search"
-          taskName="searchReindexFull"
-          size="20"
-          .appState="${this.appState}"
-          @task:complete="${() => this._handleSuccessUpdateSearch(false)}"
-        ></grampsjs-task-progress-indicator>
+        <div class="button-row">
+          <md-outlined-button
+            ?disabled=${this._buttonUpdateSearchDisabled}
+            @click="${() => this._updateSearch(false)}"
+            >${this._('Update search index')}</md-outlined-button
+          >
+          <grampsjs-task-progress-indicator
+            id="progress-update-search"
+            taskName="searchReindexFull"
+            size="20"
+            .appState="${this.appState}"
+            @task:complete="${() => this._handleSuccessUpdateSearch(false)}"
+          ></grampsjs-task-progress-indicator>
+        </div>
 
         ${this.appState.dbInfo?.server?.semantic_search
           ? html`
@@ -341,7 +322,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                   'Updating the semantic search index requires substantial time and computational resources. Run this operation only when necessary.'
                 )}
               </p>
-              <p>
+              <p class="button-row">
                 <md-outlined-button
                   ?disabled=${this._buttonUpdateSearchSemanticDisabled}
                   @click="${() => this._updateSearch(true)}"
@@ -350,7 +331,6 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                   )}</md-outlined-button
                 >
                 <grampsjs-task-progress-indicator
-                  class="button"
                   id="progress-update-search-semantic"
                   taskName="searchReindexFullSemantic"
                   size="20"
@@ -359,7 +339,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                     this._handleSuccessUpdateSearch(true)}"
                 ></grampsjs-task-progress-indicator>
               </p>
-              <p>
+              <p class="button-row">
                 <md-outlined-button
                   ?disabled=${this._buttonUpdateSearchSemanticDisabled ||
                   this.appState.dbInfo?.search?.sifts?.semantic_index_stale ===
@@ -368,7 +348,6 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                   >${this._('Update semantic search index')}</md-outlined-button
                 >
                 <grampsjs-task-progress-indicator
-                  class="button"
                   id="progress-update-search-semantic-incremental"
                   taskName="searchReindexIncrementalSemantic"
                   size="20"
@@ -382,7 +361,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Tree settings')}"
+        heading="${this._('Tree settings')}"
         description="${this._('Tree name and researcher information')}"
       >
         <h3>${this._('Family Tree name')}</h3>
@@ -408,7 +387,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Customization')}"
+        heading="${this._('Customization')}"
         description="${this._('Colors, branding, and visual appearance')}"
       >
         <h3>${this._('Theme colors')}</h3>
@@ -564,7 +543,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Family Tree Processing')}"
+        heading="${this._('Family Tree Processing')}"
         description="${this._(
           'Database checks, repairs, and other operations'
         )}"
@@ -575,17 +554,18 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
             'This tool checks the database for integrity problems, fixing the problems it can.'
           )}
         </p>
-        <md-outlined-button @click="${this._checkRepair}"
-          >${this._('Check and Repair')}</md-outlined-button
-        >
-        <grampsjs-task-progress-indicator
-          class="button"
-          id="progress-repair"
-          taskName="repairDb"
-          size="20"
-          .appState="${this.appState}"
-          @task:complete="${this._handleRepairComplete}"
-        ></grampsjs-task-progress-indicator>
+        <div class="button-row">
+          <md-outlined-button @click="${this._checkRepair}"
+            >${this._('Check and Repair')}</md-outlined-button
+          >
+          <grampsjs-task-progress-indicator
+            id="progress-repair"
+            taskName="repairDb"
+            size="20"
+            .appState="${this.appState}"
+            @task:complete="${this._handleRepairComplete}"
+          ></grampsjs-task-progress-indicator>
+        </div>
 
         ${this._repairResults?.num_errors !== undefined
           ? html`<p class="card">
@@ -600,25 +580,26 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
         <h3>${this._('Verify the Data')}</h3>
         <p>${this._('Verifies the data against user-defined tests')}</p>
         ${this._renderVerifyOptions()}
-        <md-outlined-button
-          ?disabled="${this._verifyLoading}"
-          @click="${this._runVerify}"
-        >
-          ${this._('Verify the Data')}
-        </md-outlined-button>
-        <grampsjs-task-progress-indicator
-          class="button"
-          id="progress-verify"
-          taskName="verifyDb"
-          size="20"
-          .appState="${this.appState}"
-          @task:complete="${this._handleVerifyComplete}"
-        ></grampsjs-task-progress-indicator>
+        <div class="button-row">
+          <md-outlined-button
+            ?disabled="${this._verifyLoading}"
+            @click="${this._runVerify}"
+          >
+            ${this._('Verify the Data')}
+          </md-outlined-button>
+          <grampsjs-task-progress-indicator
+            id="progress-verify"
+            taskName="verifyDb"
+            size="20"
+            .appState="${this.appState}"
+            @task:complete="${this._handleVerifyComplete}"
+          ></grampsjs-task-progress-indicator>
+        </div>
         ${this._renderVerifyResults()}
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Tags')}"
+        heading="${this._('Tags')}"
         description="${this._('Organize Tags')}"
       >
         <p>
@@ -640,7 +621,19 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Danger Zone')}"
+        heading="${this._('Backups')}"
+        description="${this._(
+          'Create, download, and restore backups of the tree'
+        )}"
+      >
+        <grampsjs-backups
+          .appState="${this.appState}"
+          username="${this._userInfo?.name || ''}"
+        ></grampsjs-backups>
+      </grampsjs-collapsible-section>
+
+      <grampsjs-collapsible-section
+        heading="${this._('Danger Zone')}"
         description="${this._('Irreversible operations on tree data')}"
       >
         <div class="danger-zone">
@@ -651,7 +644,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                 'Clear the family tree by removing all existing objects. Optionally, select specific types of objects for deletion.'
               )}
             </p>
-            <p class="actions first-control">
+            <p class="button-row first-control">
               <md-outlined-button
                 class="danger-button"
                 @click="${this._openDeleteAll}"
@@ -664,54 +657,11 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
                 ${this._('Delete')}
               </md-outlined-button>
               <grampsjs-task-progress-indicator
-                class="button"
                 id="progress-delete-all"
                 taskName="deleteObjects"
                 size="20"
                 .appState="${this.appState}"
                 @task:complete="${this._handleDeleteAllComplete}"
-              ></grampsjs-task-progress-indicator>
-            </p>
-          </div>
-
-          <div class="danger-zone-row">
-            <p class="bold">${this._('Restore from Backup')}</p>
-            <p>
-              ${this._(
-                'Reset the tree to match an uploaded Gramps XML backup, adding, updating, and deleting objects as needed. This is a destructive replace, not a merge.'
-              )}
-            </p>
-            <p class="first-control">
-              <grampsjs-form-upload
-                id="upload-restore"
-                accept=".gramps"
-                filename
-                outlined
-                .appState="${this.appState}"
-                @formdata:changed="${this._handleRestoreUploadChanged}"
-              ></grampsjs-form-upload>
-            </p>
-            ${this._restoreUploadHint || ''}
-            <p class="actions">
-              <md-outlined-button
-                class="danger-button"
-                ?disabled="${!this._restoreReady}"
-                @click="${this._openRestorePreview}"
-              >
-                <grampsjs-icon
-                  slot="icon"
-                  path="${mdiBackupRestore}"
-                  color="var(--grampsjs-alert-error-font-color)"
-                ></grampsjs-icon>
-                ${this._('Preview Restore')}
-              </md-outlined-button>
-              <grampsjs-task-progress-indicator
-                class="button"
-                id="progress-restore"
-                taskName="restoreBackup"
-                size="20"
-                .appState="${this.appState}"
-                @task:complete="${this._handleRestoreTaskComplete}"
               ></grampsjs-task-progress-indicator>
             </p>
           </div>
@@ -722,11 +672,6 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
         .appState="${this.appState}"
         @delete-objects="${this._handleDeleteAll}"
       ></grampsjs-delete-all>
-      <grampsjs-restore-backup-confirm-dialog
-        .appState="${this.appState}"
-        .summary="${this._restoreSummary}"
-        @restore-confirmed="${this._handleRestoreConfirmed}"
-      ></grampsjs-restore-backup-confirm-dialog>
       <grampsjs-relogin
         .appState="${this.appState}"
         @relogin="${this._handleRelogin}"
@@ -780,130 +725,12 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
     }
   }
 
-  // Retries whichever danger-zone action requested relogin (delete-all or
-  // restore-from-backup preview/apply) once a fresh token is obtained.
+  // Retries the danger-zone action that requested relogin once a fresh token
+  // is obtained.
   _handleRelogin() {
     const action = this._pendingAction
     this._pendingAction = null
     action?.()
-  }
-
-  _handleRestoreUploadChanged() {
-    const uploadForm = this.renderRoot.querySelector('#upload-restore')
-    const file = uploadForm?.file
-    if (!file?.name) {
-      this._restoreReady = false
-      this._restoreUploadHint = ''
-      return
-    }
-    if (!file.name.toLowerCase().endsWith('.gramps')) {
-      this._restoreReady = false
-      this._restoreUploadHint = html`<p class="alert error">
-        ${this._('Unsupported format')}
-      </p>`
-      return
-    }
-    this._restoreUploadHint = ''
-    this._restoreReady = true
-  }
-
-  _openRestorePreview() {
-    if (!this._restoreReady) return
-    if (this.appState.auth.isTokenFresh()) {
-      this._submitRestore(true)
-    } else {
-      this._pendingAction = () => this._submitRestore(true)
-      this.renderRoot.querySelector('grampsjs-relogin').show()
-    }
-  }
-
-  _handleRestoreConfirmed() {
-    if (this.appState.auth.isTokenFresh()) {
-      this._submitRestore(false)
-    } else {
-      this._pendingAction = () => this._submitRestore(false)
-      this.renderRoot.querySelector('grampsjs-relogin').show()
-    }
-  }
-
-  async _submitRestore(dryRun) {
-    const uploadForm = this.renderRoot.querySelector('#upload-restore')
-    const file = uploadForm?.file
-    if (!file) return
-    this._restoreDryRun = dryRun
-    const prog = this.renderRoot.querySelector('#progress-restore')
-    prog.reset()
-    prog.open = true
-    const url = `/api/importers/gramps/file/restore${
-      dryRun ? '?dry_run=true' : ''
-    }`
-    const res = await this.appState.apiPost(url, file, {
-      isJson: false,
-      dbChanged: false,
-      requireFresh: true,
-    })
-    if ('error' in res) {
-      // The access token can be silently refreshed (and thus lose its
-      // freshness) between the isTokenFresh() check in _openRestorePreview /
-      // _handleRestoreConfirmed and this request actually going out — e.g.
-      // when it was within a minute of expiring at click time (see
-      // Auth.getValidAccessToken() / _shouldRefresh() in api.js). Route that
-      // race into the same relogin flow instead of surfacing a raw 401.
-      if (res.errorDetail?.status === 401) {
-        prog.reset()
-        prog.open = false
-        this._pendingAction = () => this._submitRestore(dryRun)
-        this.renderRoot.querySelector('grampsjs-relogin').show()
-        return
-      }
-      prog.setError()
-      prog.errorMessage = res.error
-      return
-    }
-    if ('task' in res) {
-      const taskId = res.task?.id || ''
-      if (taskId) {
-        this.appState.registerTask(
-          taskId,
-          dryRun ? 'Preview Restore from Backup' : 'Restore from Backup',
-          {taskName: 'restoreBackup'}
-        )
-      }
-      prog.taskId = taskId
-      return
-    }
-    prog.setComplete()
-    if (dryRun) {
-      // A plain 200 response is wrapped as {data, total_count, etag} by
-      // apiPutPostDelete (only the 202/task shape returns the body as-is).
-      this._handleRestorePreviewResult(res.data)
-    } else {
-      this._handleRestoreApplyComplete()
-    }
-  }
-
-  _handleRestoreTaskComplete(e) {
-    if (this._restoreDryRun) {
-      const result = JSON.parse(e.detail?.status?.result || '{}')
-      this._handleRestorePreviewResult(result)
-    } else {
-      this._handleRestoreApplyComplete()
-    }
-  }
-
-  _handleRestorePreviewResult(summary) {
-    this._restoreSummary = summary || {}
-    this.renderRoot
-      .querySelector('grampsjs-restore-backup-confirm-dialog')
-      .show()
-  }
-
-  _handleRestoreApplyComplete() {
-    const uploadForm = this.renderRoot.querySelector('#upload-restore')
-    uploadForm?.reset()
-    this._restoreReady = false
-    this._restoreSummary = {}
-    fireEvent(this, 'db:changed')
   }
 
   async _handleDeleteAll(e) {
@@ -920,7 +747,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
     })
     if ('error' in data) {
       prog.setError()
-      prog.errorMessage = data.error
+      prog.errorMessage = dispatchErrorMessage(this.appState, data)
     } else if ('task' in data) {
       const taskId = data.task?.id || ''
       if (taskId)
@@ -964,7 +791,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
     const data = await this.appState.apiPost(url, undefined, {dbChanged: false})
     if ('error' in data) {
       prog.setError()
-      prog.errorMessage = data.error
+      prog.errorMessage = dispatchErrorMessage(this.appState, data)
       this._doneUpdateSearch(semantic)
     } else if ('task' in data) {
       const taskId = data.task?.id || ''
@@ -1013,7 +840,7 @@ export class GrampsjsViewAdminSettings extends GrampsjsView {
     })
     if ('error' in data) {
       prog.setError()
-      prog.errorMessage = data.error
+      prog.errorMessage = dispatchErrorMessage(this.appState, data)
     } else if ('task' in data) {
       const taskId = data.task?.id || ''
       if (taskId)

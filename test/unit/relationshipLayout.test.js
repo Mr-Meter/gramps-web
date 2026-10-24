@@ -1,10 +1,13 @@
 import {describe, it, expect} from 'vitest'
 import {FamilyGraph} from '../../src/charts/model/FamilyGraph.js'
 import {
+  archHeight,
   layoutRelationships,
   relationshipDot,
   relationshipModel,
 } from '../../src/charts/layout/relationshipLayout.js'
+import {trackSpacing} from '../../src/charts/layout/orthogonalRoutes.js'
+import {familyMarkerPosition} from '../../src/charts/familyMarker.js'
 
 const childRef = (ref, frel = 'Birth', mrel = 'Birth') => ({ref, frel, mrel})
 
@@ -52,31 +55,120 @@ const graph = new FamilyGraph(people)
 
 describe('relationshipModel', () => {
   const model = relationshipModel(graph)
-  const cluster = key => model.clusters.find(c => c.key === key)
+  const groupOf = handle => model.groupOfPerson.get(handle)
 
-  it('gives each family a cluster with its known partners', () => {
-    expect(cluster('fRS').members).toEqual(['R', 'S'])
-    expect(cluster('fFM').members).toEqual(['F', 'M'])
-    expect(cluster('fA').members).toEqual(['A1', 'A2'])
-    expect(cluster('fTV').members).toEqual(['V', 'T'])
-    expect(cluster('p_X').members).toEqual(['X'])
+  it('puts partners, and partners of partners, into one group', () => {
+    expect(groupOf('R').members).toEqual(['S', 'R', 'T', 'V'])
+    expect(groupOf('F').members).toEqual(['F', 'M'])
+    expect(groupOf('A2').members).toEqual(['A1', 'A2'])
+    expect(groupOf('X').members).toEqual(['X'])
+    expect(model.groups.flatMap(group => group.members).sort()).toEqual(
+      people.map(p => p.handle).sort()
+    )
   })
 
-  it('puts a person in one cluster per family', () => {
-    expect([...model.clustersOfPerson.get('R')]).toEqual(['fRS', 'fRT'])
-    expect([...model.clustersOfPerson.get('T')]).toEqual(['fRT', 'fTV'])
+  it('places each family in the gap between its partners', () => {
+    expect(
+      groupOf('R').families.map(({family, left, right, adjacent}) => [
+        family.handle,
+        left,
+        right,
+        adjacent,
+      ])
+    ).toEqual([
+      ['fRS', 0, 1, true],
+      ['fRT', 1, 2, true],
+      ['fTV', 2, 3, true],
+    ])
+  })
+
+  it('puts a person with three partners between the first and the others', () => {
+    const fRW = family('fRW', 'R', 'W')
+    const more = new FamilyGraph([
+      person('R', {families: [fRS, fRT, fRW]}),
+      person('S', {families: [fRS]}),
+      person('T', {families: [fRT]}),
+      person('W', {families: [fRW]}),
+    ])
+    const [group] = relationshipModel(more).groups
+    expect(group.members).toEqual(['S', 'R', 'T', 'W'])
+    expect(group.families.find(f => f.family === fRW)).toMatchObject({
+      left: 1,
+      right: 3,
+      adjacent: false,
+    })
+  })
+
+  it('orders partners by the family list, whoever is fetched first', () => {
+    const fRW = family('fRW', 'R', 'W')
+    const more = new FamilyGraph([
+      person('W', {families: [fRW]}),
+      person('T', {families: [fRT]}),
+      person('R', {families: [fRS, fRT, fRW]}),
+      person('S', {families: [fRS]}),
+    ])
+    expect(relationshipModel(more).groups[0].members).toEqual([
+      'S',
+      'R',
+      'T',
+      'W',
+    ])
+  })
+
+  it('puts the marker of a bracket under the partner with fewer partners', () => {
+    const fRW = family('fRW', 'R', 'W')
+    const more = new FamilyGraph([
+      person('R', {families: [fRS, fRT, fRW]}),
+      person('S', {families: [fRS]}),
+      person('T', {families: [fRT]}),
+      person('W', {families: [fRW]}),
+    ])
+    const [group] = relationshipModel(more).groups
+    expect(group.families.find(f => f.family === fRW).outer).toBe(3)
+  })
+
+  it('links a child once from a single parent of several families', () => {
+    // C is M's birth child without a known father, and M's stepchild with
+    // an unfetched husband; F is fostered and then adopted by M
+    const fA = family('fA', undefined, 'M', [childRef('C')])
+    const fB = family('fB', 'X', 'M', [
+      childRef('C', 'Stepchild', 'Birth'),
+      childRef('F', 'Adopted', 'Adopted'),
+    ])
+    const fF = family('fF', 'Y', 'M', [childRef('F', 'Foster', 'Foster')])
+    const single = new FamilyGraph([
+      person('M', {families: [fA, fB, fF]}),
+      person('C', {primary_parent_family: fA, parent_families: [fA, fB]}),
+      person('F', {primary_parent_family: fF, parent_families: [fF, fB]}),
+    ])
+    expect(
+      relationshipModel(single).edges.map(
+        ({fromPerson, toPerson, relation}) => [fromPerson, toPerson, relation]
+      )
+    ).toEqual([
+      ['M', 'C', 'Birth'],
+      ['M', 'F', 'Foster'],
+    ])
+  })
+
+  it('puts the father of a single couple on the left', () => {
+    const fPQ = family('fPQ', 'P', 'Q')
+    const couple = new FamilyGraph([
+      person('Q', {families: [fPQ]}),
+      person('P', {families: [fPQ]}),
+    ])
+    expect(relationshipModel(couple).groups[0].members).toEqual(['P', 'Q'])
   })
 
   it('links children from all parent families with their relation', () => {
-    const childEdges = model.edges
-      .filter(edge => edge.kind === 'child')
-      .map(({familyKey, fromPerson, toPerson, relation}) => [
-        familyKey,
+    expect(
+      model.edges.map(({family, fromPerson, toPerson, relation}) => [
+        family?.handle,
         fromPerson,
         toPerson,
         relation,
       ])
-    expect(childEdges).toEqual([
+    ).toEqual([
       ['fFM', undefined, 'R', 'Birth'],
       ['fA', undefined, 'R', 'Adopted'],
       ['fRS', undefined, 'K', 'Birth'],
@@ -93,42 +185,80 @@ describe('relationshipModel', () => {
     ])
     const [edge] = relationshipModel(halfKnown).edges
     expect(edge).toMatchObject({
-      familyKey: 'fP',
+      family: undefined,
       fromPerson: 'P',
       toPerson: 'C',
     })
   })
-
-  it('gives a placeholder parent to people without known parents in several families', () => {
-    expect(cluster('p_fakeparentT')).toMatchObject({
-      members: ['fakeparentT'],
-      placeholder: true,
-    })
-    expect(model.edges.filter(edge => edge.kind === 'placeholder')).toEqual([
-      {
-        familyKey: 'p_fakeparentT',
-        fromPerson: 'fakeparentT',
-        toPerson: 'T',
-        kind: 'placeholder',
-      },
-    ])
-    expect(cluster('p_fakeparentS')).toBeUndefined()
-  })
 })
 
 describe('relationshipDot', () => {
-  it('links a child to each of its nodes', () => {
-    const dot = relationshipDot(relationshipModel(graph))
-    expect(dot).toContain('"node_fFM" -> "node_fRSxR"')
-    expect(dot).toContain('"node_fFM" -> "node_fRTxR"')
+  it('makes one node per partner group and links children to their card', () => {
+    const model = relationshipModel(graph)
+    const dot = relationshipDot(model)
+    expect(dot.match(/\[label=</g)).toHaveLength(model.groups.length)
+    expect(dot).not.toContain('cluster')
+    const name = handle => `group${model.groupOfPerson.get(handle).index}`
+    // R is the second card of their group, below the gap between F and M
+    expect(dot).toContain(`"${name('F')}":"g0":s -> "${name('R')}":"p1":n`)
+  })
+
+  it('declares the edges of a group from where they leave it', () => {
+    // R's family with Z is a bracket that starts under Z's card, right of
+    // W's card, where W's child with an unfetched partner starts
+    const fRW = family('fRW', 'R', 'W')
+    const fRZ = family('fRZ', 'R', 'Z', [childRef('C1')])
+    const fWX = family('fWX', 'X', 'W', [childRef('C2')])
+    const tree = new FamilyGraph([
+      person('R', {families: [fRS, fRT, fRW, fRZ]}),
+      person('S', {families: [fRS]}),
+      person('T', {families: [fRT]}),
+      person('W', {families: [fRW, fWX]}),
+      person('Z', {families: [fRZ]}),
+      person('C1', {primary_parent_family: fRZ}),
+      person('C2', {primary_parent_family: fWX}),
+    ])
+    const model = relationshipModel(tree)
+    expect(model.groupOfPerson.get('R').members).toEqual([
+      'S',
+      'R',
+      'T',
+      'W',
+      'Z',
+    ])
+    const dot = relationshipDot(model)
+    const name = handle => `group${model.groupOfPerson.get(handle).index}`
+    const edgeTo = handle => dot.indexOf(`-> "${name(handle)}"`)
+    expect(edgeTo('C2')).toBeLessThan(edgeTo('C1'))
+  })
+
+  it('declares children in order below a group that links to itself', () => {
+    // M marries the widow W and later her daughter D
+    const fHW = family('fHW', 'H', 'W', [childRef('D')])
+    const fMW = family('fMW', 'M', 'W', [childRef('E1'), childRef('E2')])
+    const fMD = family('fMD', 'M', 'D')
+    const tree = new FamilyGraph([
+      person('E2', {primary_parent_family: fMW}),
+      person('E1', {primary_parent_family: fMW}),
+      person('H', {families: [fHW]}),
+      person('W', {families: [fHW, fMW]}),
+      person('M', {families: [fMW, fMD]}),
+      person('D', {primary_parent_family: fHW, families: [fMD]}),
+    ])
+    const model = relationshipModel(tree)
+    const dot = relationshipDot(model)
+    const node = handle =>
+      dot.indexOf(`"group${model.groupOfPerson.get(handle).index}" [label`)
+    expect(node('W')).toBeLessThan(node('E1'))
+    expect(node('E1')).toBeLessThan(node('E2'))
   })
 })
 
 describe('layoutRelationships', () => {
-  it('places the first node of the root person at the origin', async () => {
+  it('places the root person at the origin', async () => {
     const layout = await layoutRelationships(graph, 'R')
     expect(layout.root).toMatchObject({kind: 'person', handle: 'R', x: 0, y: 0})
-    expect(layout.root.key).toBe('fRS:R')
+    expect(layout.root.key).toBe('person:R')
     expect(layout.root.person).toBe(graph.person('R'))
   })
 
@@ -147,39 +277,143 @@ describe('layoutRelationships', () => {
     })
   })
 
-  it('returns person, family and placeholder nodes', async () => {
+  it('returns one node per person and one per family', async () => {
     const layout = await layoutRelationships(graph, 'R')
-    const kinds = kind => layout.nodes.filter(node => node.kind === kind)
-    expect(kinds('person').filter(node => node.handle === 'R')).toHaveLength(2)
-    expect(kinds('family').map(node => node.key)).toContain('family:fA')
-    expect(kinds('placeholder').map(node => node.key)).toEqual([
-      'placeholder:fakeparentT',
+    const keys = kind =>
+      layout.nodes.filter(node => node.kind === kind).map(node => node.key)
+    expect(keys('person').sort()).toEqual(
+      people.map(p => `person:${p.handle}`).sort()
+    )
+    expect(keys('family').sort()).toEqual([
+      'family:fA',
+      'family:fFM',
+      'family:fRS',
+      'family:fRT',
+      'family:fTV',
     ])
-    expect(kinds('person').find(node => node.handle === 'X')).toBeDefined()
+  })
+
+  it('draws partners side by side with their family between them', async () => {
+    const layout = await layoutRelationships(graph, 'R')
+    const node = key => layout.nodes.find(n => n.key === key)
+    const [s, r, t] = ['person:S', 'person:R', 'person:T'].map(node)
+    expect(s.y).toBe(r.y)
+    expect(t.y).toBe(r.y)
+    expect(r.x - s.x).toBeCloseTo(t.x - r.x)
+    expect(r.x - s.x).toBeGreaterThan(190)
+    expect(node('family:fRT')).toMatchObject({x: (r.x + t.x) / 2, y: r.y})
+  })
+
+  it('joins partners who are not next to each other with a bracket', async () => {
+    const fRW = family('fRW', 'R', 'W', [childRef('N')])
+    const more = new FamilyGraph([
+      person('R', {families: [fRS, fRT, fRW]}),
+      person('S', {families: [fRS]}),
+      person('T', {families: [fRT]}),
+      person('W', {families: [fRW]}),
+      person('N', {primary_parent_family: fRW}),
+    ])
+    const layout = await layoutRelationships(more, 'R')
+    const node = key => layout.nodes.find(n => n.key === key)
+    const marker = node('family:fRW')
+    // The bracket runs from R's card to the marker under the left part of
+    // W's card
+    const {left, right, top} = marker.bracket
+    expect(marker.x + left).toBeCloseTo(0)
+    expect(marker.x + right).toBeCloseTo(node('person:W').x - 190 / 4)
+    expect(marker.y + top).toBeCloseTo(45)
+    expect(marker.y).toBeGreaterThan(0)
+    expect(node('family:fRT').bracket).toBeUndefined()
+    expect(node('person:N').y).toBeGreaterThan(marker.y)
+  })
+
+  it('makes room for brackets below the bottom row', async () => {
+    // R has four wives and is in the bottom row with a sister
+    const fP = family('fP', 'F', 'M', [childRef('R'), childRef('Q')])
+    const wives = ['S', 'T', 'W', 'Z']
+    const fams = wives.map(wife => family(`fR${wife}`, 'R', wife))
+    const more = new FamilyGraph([
+      person('F', {families: [fP]}),
+      person('M', {families: [fP]}),
+      person('R', {primary_parent_family: fP, families: fams}),
+      person('Q', {primary_parent_family: fP}),
+      ...wives.map((wife, i) => person(wife, {families: [fams[i]]})),
+    ])
+    const {nodes, bounds} = await layoutRelationships(more, 'R')
+    const node = key => nodes.find(n => n.key === key)
+    expect(node('person:Q').y).toBe(node('person:R').y)
+    const markers = nodes.filter(n => n.bracket)
+    expect(markers).toHaveLength(2)
+    for (const marker of markers) {
+      // The bottom of the ring, relative to the node, is 35 + 6 pixels down
+      expect(marker.y + 41).toBeLessThanOrEqual(bounds.yMax)
+    }
+  })
+
+  it('makes room for an arch above the top row', async () => {
+    // M marries the widow W and later her daughter D
+    const fHW = family('fHW', 'H', 'W', [childRef('D')])
+    const fMW = family('fMW', 'M', 'W')
+    const fMD = family('fMD', 'M', 'D')
+    const {nodes, bounds} = await layoutRelationships(
+      new FamilyGraph([
+        person('H', {families: [fHW]}),
+        person('W', {families: [fHW, fMW]}),
+        person('M', {families: [fMW, fMD]}),
+        person('D', {primary_parent_family: fHW, families: [fMD]}),
+      ]),
+      'M'
+    )
+    const d = nodes.find(n => n.key === 'person:D')
+    expect(d.y - 45 - archHeight).toBeGreaterThanOrEqual(bounds.yMin)
   })
 
   it('draws parents above their children', async () => {
     const layout = await layoutRelationships(graph, 'R')
     const node = key => layout.nodes.find(n => n.key === key)
-    expect(node('fFM:F').y).toBeLessThan(node('fRS:R').y)
-    expect(node('fRS:R').y).toBeLessThan(node('p_K:K').y)
+    expect(node('person:F').y).toBeLessThan(node('person:R').y)
+    expect(node('person:R').y).toBeLessThan(node('person:K').y)
+  })
+
+  it('draws children in the order of their family, whatever the fetch order', async () => {
+    const children = ['C1', 'C2', 'C3', 'C4']
+    const fP = family(
+      'fP',
+      'P',
+      'Q',
+      children.map(c => childRef(c))
+    )
+    const tree = new FamilyGraph([
+      ...[...children]
+        .reverse()
+        .map(c => person(c, {primary_parent_family: fP})),
+      person('P', {families: [fP]}),
+      person('Q', {families: [fP]}),
+    ])
+    const layout = await layoutRelationships(tree, 'P')
+    const x = handle =>
+      layout.nodes.find(node => node.key === `person:${handle}`).x
+    const xs = children.map(x)
+    expect(xs).toEqual([...xs].sort((a, b) => a - b))
   })
 
   it('links children with their relation', async () => {
     const layout = await layoutRelationships(graph, 'R')
     const adopted = layout.links.filter(link => link.relation === 'Adopted')
     expect(adopted.map(link => [link.source.key, link.target.key])).toEqual([
-      ['family:fA', 'fRS:R'],
-      ['family:fA', 'fRT:R'],
+      ['family:fA', 'person:R'],
     ])
   })
 
-  it('returns the route of each link from its source down to its target', async () => {
+  it('returns the route of each link from its source down to the top of its target', async () => {
     const layout = await layoutRelationships(graph, 'R')
     for (const link of layout.links) {
       expect(link.points.length).toBeGreaterThan(1)
       expect(link.points[0][1]).toBeGreaterThanOrEqual(link.source.y)
-      expect(link.points.at(-1)[1]).toBeLessThanOrEqual(link.target.y)
+      expect(Math.abs(link.points.at(-1)[0] - link.target.x)).toBeLessThan(
+        190 / 4
+      )
+      expect(link.points.at(-1)[1]).toBeCloseTo(link.target.y - 45)
     }
   })
 
@@ -191,5 +425,272 @@ describe('layoutRelationships', () => {
       expect(node.y).toBeGreaterThanOrEqual(bounds.yMin)
       expect(node.y).toBeLessThanOrEqual(bounds.yMax)
     }
+  })
+})
+
+// Returns the ways in which the routes of a layout break the rules of
+// right-angled links, as strings, for cards of 190 by 90 pixels
+function routeProblems({nodes, links, bounds}) {
+  const [boxWidth, boxHeight, eps] = [190, 90, 0.01]
+  const problems = []
+  const marker = familyMarkerPosition(boxHeight)
+  const cards = nodes.filter(node => node.kind === 'person')
+  const horizontals = []
+  const verticals = []
+  const inBounds = ([x, y]) =>
+    x >= bounds.xMin - eps &&
+    x <= bounds.xMax + eps &&
+    y >= bounds.yMin - eps &&
+    y <= bounds.yMax + eps
+  for (const link of links) {
+    const {points, source, target, key} = link
+    if (points.length < 4 || points.length % 2 !== 0) {
+      problems.push(`${key} has ${points.length} points`)
+      continue
+    }
+    const start =
+      source.kind === 'family'
+        ? [source.x + marker[0], source.y + marker[1]]
+        : [source.x, source.y + boxHeight / 2]
+    const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < eps
+    const [endX, endY] = points.at(-1)
+    if (
+      !near(points[0], start) ||
+      Math.abs(endY - (target.y - boxHeight / 2)) > eps ||
+      Math.abs(endX - target.x) > boxWidth / 4
+    ) {
+      problems.push(`${key} does not join its source and target`)
+    }
+    if (!points.every(inBounds)) {
+      problems.push(`${key} leaves the bounds`)
+    }
+    const arch = points[1][1] < points[0][1]
+    for (let i = 1; i < points.length; i += 1) {
+      const [[x0, y0], [x1, y1]] = [points[i - 1], points[i]]
+      const vertical = i % 2 === 1
+      if (vertical ? Math.abs(x1 - x0) > eps : Math.abs(y1 - y0) > eps) {
+        problems.push(`${key} has a slanted line`)
+      }
+      // The line down from a source and the bar below it are shared
+      const owner = i <= 2 && !arch ? source.key : `${key}#${i}`
+      const [lo, hi, at] = vertical
+        ? [Math.min(y0, y1), Math.max(y0, y1), x0]
+        : [Math.min(x0, x1), Math.max(x0, x1), y0]
+      ;(vertical ? verticals : horizontals).push({key, owner, lo, hi, at, i})
+      for (const card of cards) {
+        // An arch from a single parent starts under their own card
+        if (arch && card === source) continue
+        if (
+          Math.min(x0, x1) < card.x + boxWidth / 2 - eps &&
+          Math.max(x0, x1) > card.x - boxWidth / 2 + eps &&
+          Math.min(y0, y1) < card.y + boxHeight / 2 - eps &&
+          Math.max(y0, y1) > card.y - boxHeight / 2 + eps
+        ) {
+          problems.push(`${key} goes through ${card.key}`)
+        }
+      }
+    }
+  }
+  const barY = new Map()
+  for (const {owner, at, i, key} of horizontals) {
+    if (i === 2 && !owner.includes('#')) {
+      if (barY.has(owner) && Math.abs(barY.get(owner) - at) > eps) {
+        problems.push(`${key} leaves the bar of ${owner}`)
+      }
+      barY.set(owner, at)
+    }
+  }
+  // Lines of different owners do not run along each other
+  for (const [lines, spacing] of [
+    [horizontals, trackSpacing],
+    [verticals, 0],
+  ]) {
+    lines.sort((a, b) => a.at - b.at)
+    for (let i = 0; i < lines.length; i += 1) {
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const [a, b] = [lines[i], lines[j]]
+        if (b.at - a.at > eps) break
+        if (a.owner === b.owner || a.hi - a.lo < eps || b.hi - b.lo < eps) {
+          continue
+        }
+        if (a.lo < b.hi + spacing - eps && b.lo < a.hi + spacing - eps) {
+          problems.push(`${a.key} runs along ${b.key}`)
+        }
+      }
+    }
+  }
+  return problems
+}
+
+// Returns a family tree of `generations` generations from one couple, made
+// the same for each `seed`: the first couple has three children and each
+// other couple up to five, some of whom are adopted, and children marry
+// people from outside the tree, some of them more than once, or a cousin
+function generatedTree(generations, seed) {
+  let state = seed
+  const random = () => {
+    state = (state * 16807) % 2147483647
+    return state / 2147483647
+  }
+  const families = []
+  let count = 0
+  const newPerson = () => `P${(count += 1)}`
+  let couples = [[newPerson(), newPerson()]]
+  for (let g = 1; g < generations; g += 1) {
+    const children = []
+    const next = []
+    for (const [father, mother] of couples) {
+      const family = {
+        handle: `F${families.length}`,
+        father,
+        mother,
+        children: [],
+      }
+      families.push(family)
+      const n = g === 1 ? 3 : Math.floor(random() * 6)
+      for (let c = 0; c < n; c += 1) {
+        const child = newPerson()
+        family.children.push([child, random() < 0.1 ? 'Adopted' : 'Birth'])
+        children.push(child)
+      }
+    }
+    for (const child of children) {
+      const r = random()
+      if (r < 0.05 && children.length > 1) {
+        // A cousin or sibling marriage across the generation
+        const other = children[Math.floor(random() * children.length)]
+        if (other !== child) next.push([child, other])
+      } else if (r < 0.75) {
+        next.push([child, newPerson()])
+        if (random() < 0.15) next.push([child, newPerson()])
+      }
+    }
+    couples = next
+  }
+  const familiesOf = new Map()
+  const parentsOf = new Map()
+  const records = families.map(({handle, father, mother, children}) => ({
+    handle,
+    type: 'Married',
+    father_handle: father,
+    mother_handle: mother,
+    child_ref_list: children.map(([ref, rel]) => childRef(ref, rel, rel)),
+  }))
+  for (const record of records) {
+    for (const partner of [record.father_handle, record.mother_handle]) {
+      familiesOf.set(partner, [...(familiesOf.get(partner) ?? []), record])
+    }
+    for (const {ref} of record.child_ref_list) {
+      parentsOf.set(ref, [...(parentsOf.get(ref) ?? []), record])
+    }
+  }
+  const handles = Array.from({length: count}, (_, i) => `P${i + 1}`)
+  return new FamilyGraph(
+    handles.map(handle =>
+      person(handle, {
+        families: familiesOf.get(handle) ?? [],
+        primary_parent_family: parentsOf.get(handle)?.[0],
+        parent_families: parentsOf.get(handle) ?? [],
+      })
+    )
+  )
+}
+
+describe('right-angled routes', () => {
+  const cases = {
+    'the base graph': [graph, 'R'],
+    // A man marries his niece, so his link from his parents passes the row
+    // of hers
+    'an uncle who marries his niece': [
+      (() => {
+        const fG = family('fG', 'G1', 'G2', [childRef('U'), childRef('S')])
+        const fS = family('fS', 'S', 'SW', [childRef('N'), childRef('B')])
+        const fU = family('fU', 'U', 'N', [childRef('K')])
+        return new FamilyGraph([
+          person('G1', {families: [fG]}),
+          person('G2', {families: [fG]}),
+          person('U', {primary_parent_family: fG, families: [fU]}),
+          person('S', {primary_parent_family: fG, families: [fS]}),
+          person('SW', {families: [fS]}),
+          person('N', {primary_parent_family: fS, families: [fU]}),
+          person('B', {primary_parent_family: fS}),
+          person('K', {primary_parent_family: fU}),
+        ])
+      })(),
+      'K',
+    ],
+    // M marries the widow W and later her daughter D
+    'a man who marries his stepdaughter': [
+      (() => {
+        const fHW = family('fHW', 'H', 'W', [childRef('D')])
+        const fMW = family('fMW', 'M', 'W', [childRef('E')])
+        const fMD = family('fMD', 'M', 'D', [childRef('k')])
+        return new FamilyGraph([
+          person('H', {families: [fHW]}),
+          person('W', {families: [fHW, fMW]}),
+          person('M', {families: [fMW, fMD]}),
+          person('D', {primary_parent_family: fHW, families: [fMD]}),
+          person('E', {primary_parent_family: fMW}),
+          person('k', {primary_parent_family: fMD}),
+        ])
+      })(),
+      'M',
+    ],
+  }
+  for (const seed of [1, 2, 3]) {
+    cases[`a generated tree (${seed})`] = [generatedTree(6, seed), 'P1']
+  }
+
+  for (const [name, [tree, root]] of Object.entries(cases)) {
+    it(`routes the links of ${name}`, async () => {
+      const layout = await layoutRelationships(tree, root)
+      expect(layout.links.length).toBeGreaterThan(0)
+      expect(routeProblems(layout)).toEqual([])
+    })
+  }
+
+  it('routes every link of a generated tree', async () => {
+    const tree = generatedTree(6, 1)
+    const layout = await layoutRelationships(tree, 'P1')
+    const edges = relationshipModel(tree).edges
+    expect(layout.links).toHaveLength(edges.length)
+    expect(edges.length).toBeGreaterThan(50)
+  })
+
+  it('brings the links of several parent families to a child side by side', async () => {
+    const layout = await layoutRelationships(graph, 'R')
+    const ends = layout.links
+      .filter(link => link.target.key === 'person:R')
+      .map(link => link.points.at(-1)[0])
+    expect(ends).toHaveLength(2)
+    expect(Math.abs(ends[0] - ends[1])).toBe(20)
+  })
+
+  it('brings the links of many parent families to a child within its card', async () => {
+    // C has twelve parent families, each with one fetched parent
+    const parents = Array.from({length: 12}, (_, i) => `P${i}`)
+    const fams = parents.map(p =>
+      family(`f${p}`, p, undefined, [childRef('C')])
+    )
+    const layout = await layoutRelationships(
+      new FamilyGraph([
+        ...parents.map((p, i) => person(p, {families: [fams[i]]})),
+        person('C', {primary_parent_family: fams[0], parent_families: fams}),
+      ]),
+      'C'
+    )
+    const ends = layout.links.map(link => link.points.at(-1)[0])
+    expect(new Set(ends).size).toBe(12)
+    for (const x of ends) {
+      expect(Math.abs(x)).toBeLessThanOrEqual(190 / 2 - 12 + 0.01)
+    }
+  })
+
+  it('shares one bar among the children of a family', async () => {
+    const layout = await layoutRelationships(graph, 'R')
+    const bars = layout.links
+      .filter(link => link.source.key === 'family:fRS')
+      .map(link => link.points[1][1])
+    expect(new Set(bars).size).toBe(1)
   })
 })

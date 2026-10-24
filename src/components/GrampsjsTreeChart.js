@@ -1,7 +1,4 @@
-import {html, css} from 'lit'
-
-import '@material/web/menu/menu'
-import '@material/web/menu/menu-item'
+import {html} from 'lit'
 
 import {TreeChart} from '../charts/TreeChart.js'
 import {
@@ -10,14 +7,9 @@ import {
   layoutHourglass,
 } from '../charts/layout/treeLayout.js'
 import {GrampsjsChartBase} from './GrampsjsChartBase.js'
-import {
-  chartTransitionDuration,
-  formatChartName,
-  getImageUrl,
-} from '../charts/util.js'
-import {fireEvent, menuSelectionHandler} from '../util.js'
-import {personListItemStyles} from '../SharedStyles.js'
-import {renderPersonAvatar, renderPersonDates} from './personListUtils.js'
+import {rootRelatives} from './GrampsjsChartRelativesMenu.js'
+import {chartTransitionDuration, getImageUrl} from '../charts/util.js'
+import {getSymbols} from '../symbols.js'
 
 // Properties that change the layout of the chart
 const layoutProperties = [
@@ -28,21 +20,11 @@ const layoutProperties = [
   'nAnc',
   'nDesc',
   'gapX',
+  'vertical',
+  'expanded',
 ]
 
 class GrampsjsTreeChart extends GrampsjsChartBase {
-  static get styles() {
-    return [
-      super.styles,
-      personListItemStyles,
-      css`
-        #relatives-menu {
-          min-width: 200px;
-        }
-      `,
-    ]
-  }
-
   static get properties() {
     return {
       grampsId: {type: String},
@@ -51,6 +33,8 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
       ancestors: {type: Boolean},
       descendants: {type: Boolean},
       gapX: {type: Number},
+      vertical: {type: Boolean},
+      expanded: {type: Object},
       nameDisplayFormat: {type: String},
       canEdit: {type: Boolean},
     }
@@ -62,8 +46,10 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
     this.nAnc = 5
     this.nDesc = 5
     this.gapX = 30
+    this.vertical = false
+    // The handles of the people who show one more generation
+    this.expanded = new Set()
     this._chart = new TreeChart()
-    this._layout = null
   }
 
   render() {
@@ -73,7 +59,12 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
         style="position:relative;"
       >
         <div id="container"></div>
-        ${this.renderRelativesMenu()}
+        <grampsjs-chart-relatives-menu
+          id="relatives-menu"
+          .relatives=${this._relatives()}
+          nameDisplayFormat=${this.nameDisplayFormat}
+          .appState=${this.appState}
+        ></grampsjs-chart-relatives-menu>
       </div>
     `
   }
@@ -99,7 +90,6 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
 
   updated() {
     this._drawChart()
-    this._updateMenuAnchor()
   }
 
   _computeLayout() {
@@ -112,17 +102,23 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
         ancestorDepth: this.nAnc,
         descendantDepth: this.nDesc,
         gapX: this.gapX,
+        vertical: this.vertical,
+        expanded: this.expanded,
       })
     }
     if (this.descendants) {
       return layoutDescendants(this._graph, handle, {
         depth: this.nDesc,
         gapX: this.gapX,
+        vertical: this.vertical,
+        expanded: this.expanded,
       })
     }
     return layoutAncestors(this._graph, handle, {
       depth: this.nAnc,
       gapX: this.gapX,
+      vertical: this.vertical,
+      expanded: this.expanded,
     })
   }
 
@@ -131,85 +127,53 @@ class GrampsjsTreeChart extends GrampsjsChartBase {
       this._chart.clear()
       return
     }
-    this._chart.update(this._layout, {
+    this._chart.update(this._layout, this.chartOptions())
+  }
+
+  chartOptions() {
+    return {
       childrenTriangle: this._relatives().length > 0,
       triangleLabel: this.descendants ? this._('Parents') : this._('Children'),
+      expandLabels: {
+        ancestors: this._('Parents'),
+        descendants: this._('Children'),
+      },
       getImageUrl: d => getImageUrl(d.person, 100),
-      orientation: this.descendants ? 'RTL' : 'LTR',
+      menuSide: this._menuSide(),
       bboxWidth: this.containerWidth,
       bboxHeight: this.containerHeight,
       nameDisplayFormat: this.nameDisplayFormat,
+      ...getSymbols(this.appState.settings, s => this._(s)),
       canEdit: this.canEdit,
       duration: chartTransitionDuration(),
-    })
+    }
+  }
+
+  // The menu of relatives is on the side of the root person's card that
+  // faces away from the chart
+  _menuSide() {
+    if (this.vertical) {
+      return this.descendants ? 'top' : 'bottom'
+    }
+    return this.descendants ? 'right' : 'left'
   }
 
   // Returns the relatives in the menu of the root person's triangle: the
-  // parents in a descendant chart and the birth children in an ancestor
-  // chart. Hourglass charts show both, so they have no menu. People who were
-  // not fetched are left out.
+  // parents in a descendant chart and the children in an ancestor
+  // chart. Hourglass charts show both, so they have no menu.
   _relatives() {
     if (this.ancestors && this.descendants) {
       return []
     }
-    const {handle} = this._graph.personByGrampsId(this.grampsId) ?? {}
-    if (!handle) {
-      return []
-    }
-    const handles = this.descendants
-      ? Object.values(this._graph.parents(handle))
-      : this._graph.children(handle, {birthOnly: true})
-    return handles
-      .map(relative => this._graph.person(relative))
-      .filter(person => person?.gramps_id)
+    return rootRelatives(
+      this._graph,
+      this.grampsId,
+      this.descendants ? 'parents' : 'children'
+    )
   }
 
-  renderRelativesMenu() {
-    const relatives = this._relatives()
-    if (relatives.length === 0) {
-      return ''
-    }
-    return html`
-      <md-menu
-        id="relatives-menu"
-        positioning="fixed"
-        @close-menu=${menuSelectionHandler(item =>
-          this._selectPerson(item.dataset.grampsId)
-        )}
-      >
-        ${relatives.map(
-          person => html`
-            <md-menu-item data-gramps-id="${person.gramps_id}">
-              ${renderPersonAvatar(person, person.profile?.sex)}
-              <div slot="headline">
-                ${formatChartName(person.profile, this.nameDisplayFormat)}
-              </div>
-              ${renderPersonDates(person.profile)}
-            </md-menu-item>
-          `
-        )}
-      </md-menu>
-    `
-  }
-
-  _selectPerson(grampsId) {
-    fireEvent(this, 'pedigree:person-selected', {grampsId})
-  }
-
-  _openMenu() {
-    const menu = this.renderRoot.getElementById('relatives-menu')
-    if (menu) {
-      this._updateMenuAnchor()
-      menu.open = true
-    }
-  }
-
-  _updateMenuAnchor() {
-    const menu = this.renderRoot.getElementById('relatives-menu')
-    const triangle = this.renderRoot.getElementById('triangle-children')
-    if (menu && triangle) {
-      menu.anchorElement = triangle
-    }
+  _openMenu(e) {
+    this.renderRoot.getElementById('relatives-menu').open(e.target)
   }
 }
 

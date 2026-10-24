@@ -53,8 +53,65 @@ describe('FamilyGraph', () => {
     expect(graph.children('R')).toEqual(['A', 'B', 'C'])
   })
 
-  it('filters birth children by the relation to this parent', () => {
-    expect(graph.children('R', {birthOnly: true})).toEqual(['A'])
+  it('returns children with their relation to this parent', () => {
+    expect(graph.childRelations('R')).toEqual([
+      {handle: 'A', relation: 'Birth'},
+      {handle: 'B', relation: 'Adopted'},
+      {handle: 'C', relation: 'Foster'},
+    ])
+  })
+
+  it('returns the relation to each parent, Birth when unknown', () => {
+    expect(graph.parentRelations('R')).toEqual({
+      father: 'Birth',
+      mother: 'Birth',
+    })
+    const adopted = new FamilyGraph([
+      {
+        handle: 'B',
+        extended: {primary_parent_family: f1, families: []},
+      },
+    ])
+    expect(adopted.parentRelations('B')).toEqual({
+      father: 'Adopted',
+      mother: 'Birth',
+    })
+    expect(graph.parentRelations('S')).toEqual({
+      father: 'Birth',
+      mother: 'Birth',
+    })
+  })
+
+  it('lists a child in several families of the parent once', () => {
+    // M had G with an unknown father, then married S, who took G in
+    const fFirst = family('fFirst', '', 'M', [childRef('G')])
+    const fSecond = family('fSecond', 'S', 'M', [
+      childRef('H'),
+      childRef('G', 'Stepchild', 'Birth'),
+    ])
+    const people = (...families) => [
+      {handle: 'M', extended: {families}},
+      {handle: 'S', extended: {families: [fSecond]}},
+      {handle: 'G', extended: {primary_parent_family: fFirst}},
+    ]
+    // From the primary parent family, wherever it is in the family list
+    expect(
+      new FamilyGraph(people(fSecond, fFirst)).childRelations('M')
+    ).toEqual([
+      {handle: 'H', relation: 'Birth'},
+      {handle: 'G', relation: 'Birth'},
+    ])
+    expect(
+      new FamilyGraph(people(fFirst, fSecond)).childRelations('S')
+    ).toEqual([
+      {handle: 'H', relation: 'Birth'},
+      {handle: 'G', relation: 'Stepchild'},
+    ])
+    // From the first family for a child who was not fetched
+    const unfetched = new FamilyGraph([
+      {handle: 'M', extended: {families: [fSecond, fFirst]}},
+    ])
+    expect(unfetched.children('M')).toEqual(['H', 'G'])
   })
 
   it('returns no children for a person without families', () => {

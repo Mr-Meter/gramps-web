@@ -57,12 +57,14 @@ const source = new FamilyGraph(Object.values(people))
 const ancestors = (...args) => getTree(source, ...args)
 const descendants = (...args) => getDescendantTree(source, ...args)
 
+// A parent or child, with the relation of the child to the parent
 const emptyNode = (id, depth) => ({
   name_given: null,
   name_surname: null,
   id,
   depth,
   person: {},
+  relation: 'Birth',
 })
 
 describe('getTree', () => {
@@ -78,6 +80,7 @@ describe('getTree', () => {
       id: 'p',
       depth: 0,
       person: people.R,
+      expandable: true,
     })
     expect(tree.person).toBe(people.R)
     expect('children' in tree).toBe(false)
@@ -106,6 +109,7 @@ describe('getTree', () => {
         id: 'pmm',
         depth: 2,
         person: people.MM,
+        relation: 'Birth',
       },
     ])
   })
@@ -122,8 +126,57 @@ describe('getTree', () => {
     expect(ancestors('FM', 2, false).children).toEqual([emptyNode('pf', 1)])
   })
 
+  it('gives each parent the relation of the child to them', () => {
+    const tree = ancestors('B', 2, false)
+    expect(tree.children.map(c => [c.person, c.relation])).toEqual([
+      [people.D, 'Adopted'],
+      [people.W1, 'Birth'],
+    ])
+  })
+
   it('gives a person without parents an empty children list', () => {
     expect(ancestors('FF', 3, false).children).toEqual([])
+  })
+
+  it('marks the people at the end of a branch who have parents', () => {
+    const [father, mother] = ancestors('R', 2, false).children
+    expect(father.expandable).toBe(true)
+    expect(mother.expandable).toBe(true)
+    // FF has no parents, and GONE was not fetched
+    const [grandfather, grandmother] = ancestors('R', 3, false).children[0]
+      .children
+    expect(grandfather.expandable).toBeUndefined()
+    expect(grandmother.expandable).toBe(true)
+    expect(ancestors('FM', 2, false).children[0].expandable).toBeUndefined()
+  })
+
+  it('shows one more generation in an expanded branch', () => {
+    const tree = ancestors('R', 2, false, {expanded: new Set(['F', 'FM'])})
+    const [father, mother] = tree.children
+    expect(father.expandable).toBeUndefined()
+    expect(father.children.map(c => c.id)).toEqual(['pff', 'pfm'])
+    // An expanded branch within it grows further
+    const [, grandmother] = father.children
+    expect(grandmother.children.map(c => c.id)).toEqual(['pfmf'])
+    expect(mother.expandable).toBe(true)
+    expect('children' in mother).toBe(false)
+  })
+
+  it('expands a person who is their own ancestor once', () => {
+    const fLoop = family('fLoop', 'X', '', [childRef('X')])
+    const loop = new FamilyGraph([person('X', {parentFamily: fLoop})])
+    const tree = getTree(loop, 'X', 1, false, {expanded: new Set(['X'])})
+    const [father] = tree.children
+    expect(father.person.handle).toBe('X')
+    expect(father.expandable).toBe(true)
+    expect('children' in father).toBe(false)
+  })
+
+  it('ignores expanded branches within the depth or without parents', () => {
+    const tree = ancestors('R', 3, false, {expanded: new Set(['F', 'FF'])})
+    const [father] = tree.children
+    expect(father.children.map(c => c.id)).toEqual(['pff', 'pfm'])
+    expect('children' in father.children[0]).toBe(false)
   })
 })
 
@@ -138,26 +191,51 @@ describe('getDescendantTree', () => {
     expect('children' in tree).toBe(false)
   })
 
-  it('collects birth children across families with running ids', () => {
+  it('collects children across families with running ids', () => {
     const tree = descendants('D', 2)
-    expect(tree.children.map(c => c.id)).toEqual(['pc0', 'pc1'])
-    expect(tree.children.map(c => c.person)).toEqual([people.A, people.C])
+    expect(tree.children.map(c => c.id)).toEqual(['pc0', 'pc1', 'pc2'])
+    expect(tree.children.map(c => c.person)).toEqual([
+      people.A,
+      people.B,
+      people.C,
+    ])
     expect(tree.children.every(c => !('children' in c))).toBe(true)
   })
 
-  it('uses the mother relation for mothers', () => {
-    const tree = descendants('W1', 2)
-    expect(tree.children.map(c => c.person)).toEqual([people.A, people.B])
+  it('gives each child the relation to the parent', () => {
+    expect(descendants('D', 2).children.map(c => c.relation)).toEqual([
+      'Birth',
+      'Adopted',
+      'Birth',
+    ])
+    // B is the adopted child of D and the birth child of W1
+    expect(descendants('W1', 2).children.map(c => c.relation)).toEqual([
+      'Birth',
+      'Birth',
+    ])
   })
 
   it('keeps a child that was not fetched as an empty person', () => {
     const [childA] = descendants('D', 3).children
-    expect(childA.children).toEqual([
-      {name_given: null, name_surname: null, id: 'pc0c0', depth: 2, person: {}},
-    ])
+    expect(childA.children).toEqual([emptyNode('pc0c0', 2)])
   })
 
   it('gives a person without families an empty children list', () => {
     expect(descendants('C', 3).children).toEqual([])
+  })
+
+  it('marks the people at the end of a branch who have children', () => {
+    expect(descendants('D', 1).expandable).toBe(true)
+    const [childA, childB] = descendants('D', 2).children
+    expect(childA.expandable).toBe(true)
+    expect(childB.expandable).toBeUndefined()
+  })
+
+  it('shows one more generation in an expanded branch', () => {
+    const tree = descendants('D', 2, {expanded: new Set(['A'])})
+    const [childA, childB] = tree.children
+    expect(childA.expandable).toBeUndefined()
+    expect(childA.children.map(c => c.id)).toEqual(['pc0c0'])
+    expect('children' in childB).toBe(false)
   })
 })

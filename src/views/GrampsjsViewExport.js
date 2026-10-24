@@ -6,7 +6,10 @@ import {mdiAlertOutline} from '@mdi/js'
 
 import {GrampsjsView} from './GrampsjsView.js'
 import '../components/GrampsjsIcon.js'
+import '../components/GrampsjsImportExportReport.js'
 import {getExporterDownloadUrl, getPermissions} from '../api.js'
+import {formatRateLimit} from '../util.js'
+import {awaitTaskResponse} from '../taskResponse.js'
 
 export class GrampsjsViewExport extends GrampsjsView {
   static get styles() {
@@ -30,6 +33,7 @@ export class GrampsjsViewExport extends GrampsjsView {
       _formData: {type: Object},
       _downloadUrl: {type: String},
       _mediaDownloadUrl: {type: String},
+      _messages: {type: Array},
       _viewPrivate: {type: Boolean},
     }
   }
@@ -40,7 +44,13 @@ export class GrampsjsViewExport extends GrampsjsView {
     this._formData = {exporter: 'gramps', options: {}}
     this._downloadUrl = ''
     this._mediaDownloadUrl = ''
+    this._messages = []
     this._viewPrivate = true
+    // Tokens of the latest export and media export. A new run, or selecting
+    // another exporter, replaces the token; a replaced run discards its
+    // result.
+    this._exportOp = null
+    this._mediaOp = null
   }
 
   renderContent() {
@@ -83,7 +93,6 @@ export class GrampsjsViewExport extends GrampsjsView {
           class="button"
           size="20"
           .appState="${this.appState}"
-          @task:complete="${this._handleTaskComplete}"
         ></grampsjs-task-progress-indicator>
         <a
           download="${this._getFileName()}"
@@ -94,6 +103,12 @@ export class GrampsjsViewExport extends GrampsjsView {
           >&nbsp;</a
         >
       </p>
+      <grampsjs-import-export-report
+        .appState="${this.appState}"
+        .messages="${this._messages}"
+        heading="${this._('Left out of the export')}"
+        warn
+      ></grampsjs-import-export-report>
 
       <h3>${this._('Export your media files')}</h3>
 
@@ -110,7 +125,6 @@ export class GrampsjsViewExport extends GrampsjsView {
           class="button"
           size="20"
           .appState="${this.appState}"
-          @task:complete="${this._handleMediaTaskComplete}"
         ></grampsjs-task-progress-indicator>
         <a
           download="grampsweb-media-export.zip"
@@ -167,6 +181,11 @@ export class GrampsjsViewExport extends GrampsjsView {
 
   _handleSelect(e) {
     this._formData = {...this._formData, exporter: e.target.value}
+    this._messages = []
+    this._exportOp = null
+    const prog = this.renderRoot.querySelector('#indicator-export')
+    prog.reset()
+    prog.open = false
   }
 
   _startDownload() {
@@ -185,65 +204,58 @@ export class GrampsjsViewExport extends GrampsjsView {
   }
 
   async _generateExport() {
+    const op = {}
+    this._exportOp = op
     this._downloadUrl = ''
+    this._messages = []
     const prog = this.renderRoot.querySelector('#indicator-export')
     prog.reset()
     prog.open = true
-    const url = this._getQueryUrl()
-    const data = await this.appState.apiPost(url)
-    if ('error' in data) {
-      prog.setError()
-      prog.errorMessage = data.error
-    } else if ('task' in data) {
-      // queued task
-      const taskId = data.task?.id || ''
-      if (taskId)
-        this.appState.registerTask(taskId, 'Export', {
-          taskName: 'exportFile',
-        })
-      prog.taskId = taskId
-    } else {
-      // eagerly executed task
-      this._downloadUrl = data?.data?.url || ''
-      prog.setComplete()
+    const res = await this.appState.apiPost(this._getQueryUrl())
+    if (this._exportOp !== op) {
+      return
+    }
+    const {data} = await awaitTaskResponse(this.appState, res, {
+      prog,
+      label: 'Export',
+      taskName: 'exportFile',
+    })
+    if (data && this._exportOp === op) {
+      this._messages = data.messages || []
+      this._downloadUrl = data.url || ''
     }
   }
 
   async _generateMediaArchive() {
+    const op = {}
+    this._mediaOp = op
     this._mediaDownloadUrl = ''
     const prog = this.renderRoot.querySelector('#indicator-media')
     prog.reset()
     prog.open = true
-    const url = '/api/media/archive/'
-    const data = await this.appState.apiPost(url)
-    if ('error' in data) {
-      prog.setError()
-      prog.errorMessage = data.error
-    } else if ('task' in data) {
-      // queued task
-      const taskId = data.task?.id || ''
-      if (taskId)
-        this.appState.registerTask(taskId, 'Export media', {
-          taskName: 'exportMedia',
-        })
-      prog.taskId = taskId
-    } else {
-      // eagerly executed task
-      this._downloadUrl = data?.data?.url || ''
-      prog.setComplete()
+    let res = await this.appState.apiPost('/api/media/archive/')
+    if (this._mediaOp !== op) {
+      return
     }
-  }
-
-  _handleTaskComplete(e) {
-    const {status} = e.detail
-    const result = JSON.parse(status.result || {})
-    this._downloadUrl = result?.url || ''
-  }
-
-  _handleMediaTaskComplete(e) {
-    const {status} = e.detail
-    const result = JSON.parse(status.result || {})
-    this._mediaDownloadUrl = result?.url || ''
+    // The backend limits media archives per user (RATE_LIMIT_MEDIA_ARCHIVE).
+    if (res.errorDetail?.status === 429) {
+      const limit = formatRateLimit(
+        this.appState.dbInfo?.server?.rate_limit_media_archive,
+        this.appState.i18n?.lang
+      )
+      const message = this._('Too many requests. Please try again later.')
+      res = {
+        error: limit ? `${message} ${this._('Limit')}: ${limit}` : message,
+      }
+    }
+    const {data} = await awaitTaskResponse(this.appState, res, {
+      prog,
+      label: 'Export media',
+      taskName: 'exportMedia',
+    })
+    if (data && this._mediaOp === op) {
+      this._mediaDownloadUrl = data.url || ''
+    }
   }
 
   async _fetchData() {

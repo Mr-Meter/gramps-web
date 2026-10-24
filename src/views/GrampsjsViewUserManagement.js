@@ -103,8 +103,10 @@ export class GrampsjsViewUserManagement extends GrampsjsStaleDataMixin(
     this._fetchTags(lang)
   }
 
-  // tags are managed in the admin settings, so refresh them when coming back
+  // users can be added elsewhere, e.g. by restoring a backup, and tags are
+  // managed in the admin settings: refresh both when coming back
   handleUpdateStaleData() {
+    this._fetchUserData()
     this._fetchTags(this.appState.i18n.lang)
   }
 

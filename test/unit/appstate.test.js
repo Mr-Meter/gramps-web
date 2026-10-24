@@ -1,6 +1,7 @@
 import {describe, it, expect, afterEach} from 'vitest'
 import {
   appStateUpdatePermissions,
+  isTaskActive,
   isTaskInTree,
   shouldSignalTreeMissing,
 } from '../../src/appState.js'
@@ -52,6 +53,16 @@ describe('appStateUpdatePermissions', () => {
     )
     const result = appStateUpdatePermissions(BASE_STATE)
     expect(result.permissions.canViewOtherTree).to.be.true
+  })
+
+  it('sets canManageBackups when ManageBackups permission is present', () => {
+    localStorage.setItem(
+      'access_token',
+      makeFakeJwt({permissions: ['ManageBackups'], exp: 9999999999})
+    )
+    const result = appStateUpdatePermissions(BASE_STATE)
+    expect(result.permissions.canManageBackups).to.be.true
+    expect(result.permissions.canEditTree).to.be.false
   })
 
   it('does not set canViewOtherTree for an owner-level token', () => {
@@ -152,5 +163,19 @@ describe('isTaskInTree', () => {
 
   it('keeps all tasks when the current tree is unknown', () => {
     expect(isTaskInTree({tree: 'tree-b'}, undefined)).to.be.true
+  })
+})
+
+describe('isTaskActive', () => {
+  it('uses the status field when present', () => {
+    expect(isTaskActive({status: 'queued', state: 'PENDING'})).to.be.true
+    expect(isTaskActive({status: 'running', state: 'PROGRESS'})).to.be.true
+    expect(isTaskActive({status: 'lost', state: 'FAILURE'})).to.be.false
+    expect(isTaskActive({status: 'unknown', state: 'PENDING'})).to.be.false
+  })
+
+  it('falls back to the Celery state without a status field', () => {
+    expect(isTaskActive({state: 'STARTED'})).to.be.true
+    expect(isTaskActive({state: 'SUCCESS'})).to.be.false
   })
 })

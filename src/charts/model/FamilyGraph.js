@@ -82,19 +82,50 @@ export class FamilyGraph {
     }
   }
 
-  // Returns the handles of the person's children in all families where they
-  // are a parent. With `birthOnly`, only children whose relation to this
-  // parent is Birth are included.
-  children(handle, {birthOnly = false} = {}) {
-    return this.partnerFamilies(handle).flatMap(family => {
+  // Returns the relation of the person, such as Birth or Adopted, to the
+  // father and the mother of their primary parent family
+  parentRelations(handle) {
+    const family = this.person(handle)?.extended?.primary_parent_family
+    const childRef = family?.child_ref_list?.find(({ref}) => ref === handle)
+    return {
+      father: childRef?.frel || 'Birth',
+      mother: childRef?.mrel || 'Birth',
+    }
+  }
+
+  // Returns the person's children in all families where they are a parent,
+  // each with its `handle` and its `relation` to this parent. A child in
+  // several of these families, such as a child of a parent who remarried, is
+  // listed once, from their primary parent family if it is one of them and
+  // otherwise from the first.
+  childRelations(handle) {
+    const entries = this.partnerFamilies(handle).flatMap(family => {
       const isFather = family.father_handle === handle
       if (!isFather && family.mother_handle !== handle) {
         return []
       }
-      const relationKey = isFather ? 'frel' : 'mrel'
-      return (family.child_ref_list || [])
-        .filter(childRef => !birthOnly || childRef[relationKey] === 'Birth')
-        .map(childRef => childRef.ref)
+      return (family.child_ref_list || []).map(childRef => ({
+        family,
+        handle: childRef.ref,
+        relation: (isFather ? childRef.frel : childRef.mrel) || 'Birth',
+      }))
     })
+    const chosen = new Map()
+    for (const entry of entries) {
+      const primary = this.person(entry.handle)?.extended?.primary_parent_family
+        ?.handle
+      if (!chosen.has(entry.handle) || entry.family.handle === primary) {
+        chosen.set(entry.handle, entry)
+      }
+    }
+    return entries
+      .filter(entry => chosen.get(entry.handle) === entry)
+      .map(({handle: child, relation}) => ({handle: child, relation}))
+  }
+
+  // Returns the handles of the person's children in all families where they
+  // are a parent
+  children(handle) {
+    return this.childRelations(handle).map(child => child.handle)
   }
 }

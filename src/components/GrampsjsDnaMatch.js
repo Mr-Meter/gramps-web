@@ -8,6 +8,7 @@ import './GrampsjsFormEditMatch.js'
 import './GrampsjsConnectionChart.js'
 import {personDisplayName, fireEvent} from '../util.js'
 import './GrampsjsObjectLink.js'
+import './GrampsjsSvgDownloadButton.js'
 import {renderIconSvg} from '../icons.js'
 
 export class GrampsjsDnaMatch extends GrampsjsAppStateMixin(LitElement) {
@@ -19,6 +20,13 @@ export class GrampsjsDnaMatch extends GrampsjsAppStateMixin(LitElement) {
           padding-top: 20px;
           padding-bottom: 20px;
           clear: left;
+        }
+
+        .chart-heading {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          --grampsjs-icon-button-color: var(--grampsjs-body-font-color-60);
         }
       `,
     ]
@@ -62,68 +70,88 @@ export class GrampsjsDnaMatch extends GrampsjsAppStateMixin(LitElement) {
       </h3>
 
       <div class="container">
-      <dl>
-        <div>
-          <dt>${this._('Shared DNA')}</dt>
-          <dd>${this.data.segments
-            .reduce(
-              (accumulator, currentValue) => accumulator + currentValue.cM,
-              0
-            )
-            .toFixed(1)} cM</dd>
-        </div>
-        <div>
-          <dt>${this._('Relationship')}</dt>
-          <dd>${this.data.relation || this._('Unknown')}</dd>
-        </div>
-        <div>
-      </dl>
+        <dl>
+          <div>
+            <dt>${this._('Shared DNA')}</dt>
+            <dd>
+              ${this.data.segments
+                .reduce(
+                  (accumulator, currentValue) => accumulator + currentValue.cM,
+                  0
+                )
+                .toFixed(1)}
+              cM
+            </dd>
+          </div>
+          <div>
+            <dt>${this._('Relationship')}</dt>
+            <dd>${this.data.relation || this._('Unknown')}</dd>
+          </div>
+        </dl>
       </div>
 
       <div class="container">
         <h4>${this._('Raw match data')}</h4>
-        ${
-          this.edit
-            ? html`
-                <grampsjs-form-edit-match
-                  .appState="${this.appState}"
-                  @object:save="${this._handleSaveMatch}"
-                  .data="${this.data}"
-                ></grampsjs-form-edit-match>
-              `
-            : html`
-                <grampsjs-dna-match-table
-                  .appState="${this.appState}"
-                  .segments="${this.data.segments}"
-                ></grampsjs-dna-match-table>
-              `
-        }
+        ${this.edit
+          ? html`
+              <grampsjs-form-edit-match
+                .appState="${this.appState}"
+                @object:save="${this._handleSaveMatch}"
+                .data="${this.data}"
+              ></grampsjs-form-edit-match>
+            `
+          : html`
+              <grampsjs-dna-match-table
+                .appState="${this.appState}"
+                .segments="${this.data.segments}"
+              ></grampsjs-dna-match-table>
+            `}
       </div>
 
-      ${
-        this.data.relation
-          ? html`
-              <div class="container">
+      ${this.data.relation
+        ? html`
+            <div class="container">
+              <div class="chart-heading">
                 <h4>${this._('Relationship Graph')}</h4>
-                <grampsjs-connection-chart
+                <grampsjs-svg-download-button
+                  filename="${this._svgFilename()}"
+                  .svgDocument=${() => this._connectionChartSvg()}
                   .appState="${this.appState}"
-                  .grampsId1="${this.person.gramps_id}"
-                  .grampsId2="${this.personMatch.gramps_id}"
-                ></grampsjs-connection-chart>
+                ></grampsjs-svg-download-button>
               </div>
-            `
-          : ''
-      }
+              <grampsjs-connection-chart
+                .appState="${this.appState}"
+                .grampsId1="${this.person.gramps_id}"
+                .grampsId2="${this.personMatch.gramps_id}"
+              ></grampsjs-connection-chart>
+            </div>
+          `
+        : ''}
 
       <div class="container">
         <md-icon-button @click="${this.handleBackToAllMatches}">
-          <md-icon>${renderIconSvg(
-            mdiArrowLeft,
-            'var(--grampsjs-body-font-color-60)'
-          )}</md-icon>
+          <md-icon
+            >${renderIconSvg(
+              mdiArrowLeft,
+              'var(--grampsjs-body-font-color-60)'
+            )}</md-icon
+          >
         </md-icon-button>
       </div>
     `
+  }
+
+  // The relationship graph is saved to a file named after both people
+  _svgFilename() {
+    return `${this.person.gramps_id}-${this.personMatch.gramps_id}.svg`
+  }
+
+  _connectionChartSvg() {
+    return (
+      this.renderRoot
+        .querySelector('grampsjs-connection-chart')
+        ?.svgDocument() ?? null
+    )
   }
 
   handleBackToAllMatches() {

@@ -28,6 +28,15 @@ class _PersonSlotBase extends GrampsjsAppStateMixin(LitElement) {
           flex: 1;
           min-width: 12em;
         }
+
+        /* The slot sits under a section heading of the enclosing view, so its
+           own section headings are rendered as labels. */
+        h3.label {
+          font-family: var(--grampsjs-body-font-family);
+          font-size: 16px;
+          font-weight: 500;
+          margin: 1.33em 0;
+        }
       `,
     ]
   }
@@ -120,6 +129,12 @@ export class GrampsjsFormPersonSlot extends GrampsjsNewPersonMixin(
     return html`
       ${this.renderForm()} ${this.showRelTypes ? this._renderRelTypes() : ''}
     `
+  }
+
+  // Like tags, media are left out of the inline person form.
+  // eslint-disable-next-line class-methods-use-this
+  _renderMediaForm() {
+    return ''
   }
 
   _renderRelTypes() {

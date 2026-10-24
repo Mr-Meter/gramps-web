@@ -2,6 +2,7 @@ import {css, html} from 'lit'
 import {ifDefined} from 'lit/directives/if-defined.js'
 import {keyed} from 'lit/directives/keyed.js'
 import {map} from 'lit/directives/map.js'
+import {repeat} from 'lit/directives/repeat.js'
 
 import '@material/mwc-textfield'
 import '@material/web/button/filled-button'
@@ -30,6 +31,7 @@ import {GrampsjsStaleDataMixin} from '../mixins/GrampsjsStaleDataMixin.js'
 import '../components/GrampsjsFormSelectObject.js'
 import '../components/GrampsjsIcon.js'
 import '../components/GrampsjsPillToggle.js'
+import '../components/GrampsjsSvgDownloadButton.js'
 import '../components/GrampsjsTooltip.js'
 import '../components/GrampsjsTreeChartAddPerson.js'
 import {
@@ -37,7 +39,7 @@ import {
   chartDefinitions,
   chartSettingValues,
 } from './treeChartDefinitions.js'
-import {chartNameDisplayFormat, fireEvent, isKeyEventInInput} from '../util.js'
+import {fireEvent, isKeyEventInInput} from '../util.js'
 import {chartTransitionDuration, formatChartName} from '../charts/util.js'
 import {renderPersonAvatar} from '../components/personListUtils.js'
 import {iconButtonColorStyles, listAvatarStyles} from '../SharedStyles.js'
@@ -50,6 +52,7 @@ import {
   DEFAULT_TREE_VIEW,
   TREE_VIEWS,
   getTreeViewTabIndex,
+  treeViewPath,
 } from '../treeDefaults.js'
 
 // Zoom factor of one zoom step, distance of one pan step in pixels, and the
@@ -90,6 +93,9 @@ const keyHandlingElements = ['grampsjs-pill-toggle', 'md-menu', 'md-dialog']
 // it needs and edit mode. People are fetched again only when the request
 // changes, and a response that arrives after a newer request was sent is
 // ignored.
+//
+// The branches of a tree chart can grow by one generation at a time. The
+// people of the expanded branches are fetched with the others.
 export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   static get styles() {
     return [
@@ -145,7 +151,8 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
           }
         }
 
-        #controls md-icon-button {
+        #controls md-icon-button,
+        #controls grampsjs-svg-download-button {
           --md-icon-button-icon-size: 26px;
         }
 
@@ -259,6 +266,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       _history: {type: Array},
       _currentTabId: {type: Number},
       _data: {type: Array},
+      _expanded: {type: Object},
       _editMode: {type: Boolean},
       _chartState: {type: Object},
     }
@@ -268,12 +276,19 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
     super()
     this.grampsId = ''
     this._history = this.grampsId ? [this.grampsId] : []
+    this._backTo = undefined
     this._currentTabId = getTreeViewTabIndex(DEFAULT_TREE_VIEW)
     this._appliedTreeDefaultView = null
     this._data = []
     this._dataChart = undefined
     this._dataUrl = ''
     this._dataRequest = 0
+    // The expanded branches of the shown chart and person, by the handle of
+    // the person, with their Gramps ID and the direction of the branch
+    this._branches = new Map()
+    this._branchesOf = ''
+    // The handles of the expanded branches that the fetched people include
+    this._expanded = new Set()
     this._selectedPerson = undefined
     this._editMode = false
     this._chartState = {}
@@ -324,11 +339,19 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    // The history gets each newly selected person, also one selected while
-    // the view was not active
+    if (this.active) {
+      this._readPath()
+    }
+    // The history gets each newly shown person. Going back to the previous
+    // person removes the last one instead, once that person is shown.
     if (this.grampsId && this.grampsId !== this._history.at(-1)) {
-      // limit history to 100 people
-      this._history = [...this._history, this.grampsId].slice(-100)
+      if (this.grampsId === this._backTo) {
+        this._history = this._history.slice(0, -1)
+      } else {
+        // limit history to 100 people
+        this._history = [...this._history, this.grampsId].slice(-100)
+      }
+      this._backTo = undefined
     }
     // The selected person shown below the chart, who stays until the people
     // of a newly selected person arrive
@@ -343,13 +366,17 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       this._dataUrl = ''
       this._chartState = {}
     }
+    // Expanded branches belong to one chart of one person
+    const branchesOf = `${this.chart}:${this.grampsId}`
+    if (branchesOf !== this._branchesOf) {
+      this._branchesOf = branchesOf
+      this._branches = new Map()
+      this._expanded = new Set()
+    }
   }
 
   update(changed) {
     super.update(changed)
-    if (this.active && (changed.has('active') || changed.has('settings'))) {
-      this._applyPreferredTabIfNeeded()
-    }
     // A chart that changed during this update fetches in the next one
     if (this.chart === this._dataChart) {
       this._fetchIfNeeded()
@@ -358,6 +385,9 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
 
   updated(changed) {
     super.updated(changed)
+    if (this.active) {
+      this._completePath()
+    }
     if (changed.has('_currentTabId')) {
       fireEvent(this, 'edit-mode:off', {})
     }
@@ -380,7 +410,8 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       this.definition,
       this.grampsId,
       this.settingValues,
-      this.appState?.i18n?.lang
+      this.appState?.i18n?.lang,
+      [...this._branches.values()]
     )
     if (url !== this._dataUrl) {
       this._dataUrl = url
@@ -391,6 +422,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   async _fetchData(url) {
     this._dataRequest += 1
     const request = this._dataRequest
+    const expanded = new Set(this._branches.keys())
     this.loading = true
     const data = await this.appState.apiGet(url)
     if (request !== this._dataRequest) {
@@ -400,9 +432,22 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
     if ('data' in data) {
       this.error = false
       this._data = data.data
+      this._expanded = expanded
     } else if ('error' in data) {
       this.error = true
       this._errorMessage = data.error
+    }
+  }
+
+  // Shows one more generation in a branch of the chart
+  _expandBranch(e) {
+    const {handle, direction} = e.detail
+    const grampsId = this._data.find(
+      person => person.handle === handle
+    )?.gramps_id
+    if (grampsId && !this._branches.has(handle)) {
+      this._branches.set(handle, {grampsId, direction})
+      this._fetchIfNeeded()
     }
   }
 
@@ -415,7 +460,9 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       <div id="tabs">${this.renderTabs()}</div>
       <div style="position: relative;">
         <div id="controls">${this.renderControls()}</div>
-        <div id="chart">${this.renderChart()}</div>
+        <div id="chart" @pedigree:expand-branch=${this._expandBranch}>
+          ${this.renderChart()}
+        </div>
         ${this.renderSelectedPerson()}
       </div>
       ${editable && this.appState.permissions.canEdit && !this._editMode
@@ -430,7 +477,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   }
 
   _handleTabChange(e) {
-    this._currentTabId = getTreeViewTabIndex(e.detail.value)
+    this._navigate(e.detail.value, this.grampsId)
   }
 
   // A segmented control to switch between the charts
@@ -485,6 +532,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
         canEdit: this._editMode,
         appState: this.appState,
         state: this._chartState,
+        expanded: this._expanded,
       })
     )
     if (!definition.editable) {
@@ -541,6 +589,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       ${this.definition.zoomable ? this.renderViewportControls() : ''}
       ${this.definition.renderControls?.(this) ?? ''}
       <span class="divider"></span>
+      ${this.definition.exportable ? this.renderExportControls() : ''}
       <md-icon-button
         id="btn-controls"
         aria-label="${this._('Preferences')}"
@@ -553,7 +602,11 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
       <md-dialog id="menu-controls">
         <div slot="content">
           <table>
-            ${this.definition.settings.map(
+            ${repeat(
+              this.definition.settings,
+              // Each setting has its own input, so that an input does not
+              // keep what it showed for another chart's setting
+              setting => setting.key,
               setting => html`
                 <tr>
                   <td>${this._(setting.label)}</td>
@@ -636,14 +689,31 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
     `
   }
 
+  // Saves the chart as an SVG file named after the selected person and the
+  // chart
+  renderExportControls() {
+    return html`
+      <grampsjs-svg-download-button
+        filename="${this.grampsId}-${this.chart}.svg"
+        .svgDocument=${() => this._chartComponent()?.svgDocument() ?? null}
+        .appState="${this.appState}"
+      ></grampsjs-svg-download-button>
+    `
+  }
+
+  // The component of the chart
+  _chartComponent() {
+    return this.renderRoot?.querySelector(
+      '#chart grampsjs-tree-chart, #chart grampsjs-relationship-chart, #chart grampsjs-fan-chart'
+    )
+  }
+
   // The viewport of the chart, if it has viewport controls
   _chartViewport() {
     if (!this.definition.zoomable) {
       return undefined
     }
-    return this.renderRoot?.querySelector(
-      '#chart grampsjs-tree-chart, #chart grampsjs-relationship-chart'
-    )?.viewport
+    return this._chartComponent()?.viewport
   }
 
   _runViewportAction(action) {
@@ -683,19 +753,19 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
 
   _renderSettingInput(setting) {
     const value = this.settingValues[setting.name]
-    if (setting.type === 'nameDisplayFormat') {
+    if (setting.type === 'select') {
       return html`
         <md-filled-select
-          id="name-display-format"
+          id="setting-${setting.name}"
           @change=${e => this._changeSetting(setting, e.target.value)}
         >
           ${map(
-            Object.values(chartNameDisplayFormat),
-            format => html`<md-select-option
-              value="${format}"
-              ?selected="${format === value}"
+            setting.options,
+            option => html`<md-select-option
+              value="${option.value}"
+              ?selected="${option.value === value}"
             >
-              <div slot="headline">${this._(format)}</div>
+              <div slot="headline">${this._(option.label)}</div>
             </md-select-option>`
           )}
         </md-filled-select>
@@ -848,13 +918,59 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
     e.stopPropagation()
   }
 
+  // Shows the previous person in the shown chart. The history is shortened
+  // when that person arrives from the URL.
   _prevPerson() {
-    this._history.pop()
-    this.grampsId = this._history.pop()
+    this._backTo = this._history.at(-2)
+    this._navigate(this.chart, this._backTo)
   }
 
   _backToHomePerson() {
-    this.grampsId = this.settings.homePerson
+    this._navigate(this.chart, this.settings.homePerson)
+  }
+
+  // Shows `grampsId` in `chart` by going to its URL, which adds an entry to
+  // the browser history, or with `replace`, replaces the current one
+  _navigate(chart, grampsId, replace = false) {
+    fireEvent(this, 'nav', {path: treeViewPath(chart, grampsId), replace})
+  }
+
+  get _preferredView() {
+    return this.settings?.treeDefaultView ?? DEFAULT_TREE_VIEW
+  }
+
+  // The chart for a URL without one: the preferred chart at first and when
+  // it has changed since, otherwise the shown chart
+  get _chartWithoutPath() {
+    return this._preferredView === this._appliedTreeDefaultView
+      ? this.chart
+      : this._preferredView
+  }
+
+  // Reads the chart and the person from the URL, /tree/<chart>/<grampsId>. A
+  // URL without a chart gets `_chartWithoutPath`, one with an unknown chart
+  // the preferred chart. A URL without a person keeps the shown person, at
+  // first the home person.
+  _readPath() {
+    const {pageId, pageId2} = this.appState?.path ?? {}
+    let chart = this._chartWithoutPath
+    if (TREE_VIEWS.includes(pageId)) {
+      chart = pageId
+    } else if (pageId) {
+      chart = this._preferredView
+    }
+    this._currentTabId = getTreeViewTabIndex(chart)
+    this._appliedTreeDefaultView = this._preferredView
+    this.grampsId = pageId2 || this.grampsId || this.settings?.homePerson || ''
+  }
+
+  // Replaces a URL that does not name the shown chart and person with one
+  // that does
+  _completePath() {
+    const {pageId = '', pageId2 = ''} = this.appState?.path ?? {}
+    if (pageId !== this.chart || pageId2 !== this.grampsId) {
+      this._navigate(this.chart, this.grampsId, true)
+    }
   }
 
   // Opens the page of the person shown below the controls bar, who is the
@@ -864,21 +980,11 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
     fireEvent(this, 'nav', {path: `person/${grampsId}`})
   }
 
-  _applyPreferredTabIfNeeded() {
-    const preferredView = this.settings?.treeDefaultView ?? DEFAULT_TREE_VIEW
-    if (preferredView === this._appliedTreeDefaultView) {
-      return
-    }
-    const preferredIndex = getTreeViewTabIndex(preferredView)
-    this._appliedTreeDefaultView = preferredView
-    if (this._currentTabId !== preferredIndex) {
-      this._currentTabId = preferredIndex
-    }
-  }
-
-  async _selectPerson(event) {
-    const {grampsId} = event.detail
-    this.grampsId = grampsId
+  // Shows a person selected in a chart or elsewhere, such as on a person's
+  // page, in the chart that is shown or that a URL without a chart would get
+  _selectPerson(event) {
+    const chart = this.active ? this.chart : this._chartWithoutPath
+    this._navigate(chart, event.detail.grampsId)
   }
 }
 

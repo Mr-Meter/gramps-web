@@ -13,6 +13,7 @@ import {
   fireEvent,
   objectIconPath,
   objectTypeToEndpoint,
+  toWritableObject,
 } from '../util.js'
 import {clearDraftsWithPrefix} from '../api.js'
 import '../components/GrampsjsBreadcrumbs.js'
@@ -139,9 +140,12 @@ export class GrampsjsViewObject extends GrampsjsView {
     this._saveButton = false
     this._boundDisableEditMode = this._disableEditMode.bind(this)
     this._boundDeleteSelf = this._deleteSelf.bind(this)
+    this._boundCheckDelete = this._checkDelete.bind(this)
     this._boundToggleEditMode = this._toggleEditMode.bind(this)
     // Reuse one function reference so disconnectedCallback can release it.
     this._boundHandleEditAction = this.handleEditAction.bind(this)
+    this._dataRequestId = 0
+    this._dataLang = ''
   }
 
   get canEdit() {
@@ -201,6 +205,19 @@ export class GrampsjsViewObject extends GrampsjsView {
     })
   }
 
+  // resolves to why this object can't be deleted, as {title, message}, or null
+  // eslint-disable-next-line class-methods-use-this
+  async _deleteBlocked() {
+    return null
+  }
+
+  // the app bar asks before offering to delete; only the active view answers
+  _checkDelete(e) {
+    if (this.active && e.detail) {
+      e.detail.blocked = this._deleteBlocked()
+    }
+  }
+
   _disableEditMode() {
     this.edit = false
   }
@@ -224,6 +241,7 @@ export class GrampsjsViewObject extends GrampsjsView {
     super.connectedCallback()
     window.addEventListener('edit-mode:off', this._boundDisableEditMode)
     window.addEventListener('edit-mode:delete', this._boundDeleteSelf)
+    window.addEventListener('edit-mode:delete-check', this._boundCheckDelete)
     window.addEventListener('edit-mode:toggle', this._boundToggleEditMode)
     this.addEventListener('edit:action', this._boundHandleEditAction)
   }
@@ -232,6 +250,7 @@ export class GrampsjsViewObject extends GrampsjsView {
     this.removeEventListener('edit:action', this._boundHandleEditAction)
     window.removeEventListener('edit-mode:off', this._boundDisableEditMode)
     window.removeEventListener('edit-mode:delete', this._boundDeleteSelf)
+    window.removeEventListener('edit-mode:delete-check', this._boundCheckDelete)
     window.removeEventListener('edit-mode:toggle', this._boundToggleEditMode)
     super.disconnectedCallback()
   }
@@ -241,18 +260,25 @@ export class GrampsjsViewObject extends GrampsjsView {
     if (this.active && changed.has('grampsId')) {
       this._updateData()
     }
-    if (
-      changed.has('active') &&
-      this.active &&
-      (Object.keys(this._data).length === 0 ||
-        this._data.gramps_id !== this.grampsId) &&
-      !this.loading
-    ) {
-      this._updateData()
+    if (changed.has('active') && this.active) {
+      if (
+        (Object.keys(this._data).length === 0 ||
+          this._data.gramps_id !== this.grampsId) &&
+        !this.loading
+      ) {
+        this._updateData()
+      } else if (this._dataLang !== this.appState.i18n.lang) {
+        // The language changed while the view was inactive.
+        this._updateData(false)
+      }
     }
+    // Only react to an actual change of the language. The first assignment
+    // of appState has no previous value; the data is fetched via grampsId
+    // or active in that case.
     if (
       changed.has('appState') &&
-      changed.get('appState')?.i18n?.lang !== this.appState.i18n.lang
+      changed.get('appState') !== undefined &&
+      changed.get('appState').i18n?.lang !== this.appState.i18n.lang
     ) {
       this._handleLangChange(this.appState.i18n.lang)
     }
@@ -267,14 +293,16 @@ export class GrampsjsViewObject extends GrampsjsView {
         this._clearData()
       }
       this.loading = true
-      const url = this.getUrl()
-      this.appState.apiGet(url).then(data => {
-        this.loading = false
-        if (url !== this.getUrl()) {
-          // the language or the object changed meanwhile: an older response
-          // arriving late must not overwrite the newer one
+      this._dataRequestId += 1
+      const requestId = this._dataRequestId
+      this._dataLang = this.appState.i18n.lang
+      this.appState.apiGet(this.getUrl()).then(data => {
+        if (requestId !== this._dataRequestId) {
+          // A newer request was sent in the meantime (e.g. after the
+          // language was loaded); only its response is applied.
           return
         }
+        this.loading = false
         if ('data' in data) {
           ;[this._data] = data.data
           this.error = false
@@ -531,14 +559,6 @@ export class GrampsjsViewObject extends GrampsjsView {
       )
     } else if (e.detail.action === 'addMediaRef') {
       this.addObject(e.detail.data, this._data, this._className, 'media_list')
-    } else if (e.detail.action === 'updateMediaRef') {
-      this.updateObjectByIndex(
-        e.detail.index,
-        e.detail.data,
-        this._data,
-        this._className,
-        'media_list'
-      )
     } else if (e.detail.action === 'updateAttribute') {
       this.updateObjectByIndex(
         e.detail.index,
@@ -748,8 +768,7 @@ export class GrampsjsViewObject extends GrampsjsView {
       const personHandle = this._data.handle
       this.appState.apiGet(`/api/families/${familyHandle}`).then(result => {
         if ('data' in result) {
-          const {extended, profile, backlinks, formatted, ...family} =
-            result.data
+          const family = toWritableObject(result.data)
           // Prevent adding the person as a child to a family where they are already a parent
           if (
             family.father_handle === personHandle ||
@@ -1010,13 +1029,19 @@ export class GrampsjsViewObject extends GrampsjsView {
   }
 
   _updateObject(obj, objType, updateFunc, editorDraftPrefix) {
-    // remove extended, profile, backlinks, formatted keys from object
-    // eslint-disable-next-line prefer-const
-    let {extended, profile, backlinks, formatted, ...objNew} = obj
-    objNew = {_class: capitalize(objType), ...objNew}
+    const objNew = {_class: capitalize(objType), ...toWritableObject(obj)}
+    // Places may carry a stray `type` key that older API versions stored;
+    // the API rejects it as an unknown Place key.
+    if (objType === 'place') {
+      delete objNew.type
+    }
     const url = `/api/${objectTypeToEndpoint[objType]}/${obj.handle}`
 
-    this.appState.apiPut(url, updateFunc(objNew)).then(() => {
+    return this.appState.apiPut(url, updateFunc(objNew)).then(data => {
+      if ('error' in data) {
+        fireEvent(this, 'grampsjs:error', {message: data.error})
+        return
+      }
       this._updateData(false)
       // Clear editor drafts after successful save (if prefix provided)
       if (editorDraftPrefix) {

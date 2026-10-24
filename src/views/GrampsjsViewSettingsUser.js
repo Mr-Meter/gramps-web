@@ -1,18 +1,17 @@
 import {html, css} from 'lit'
+import {keyed} from 'lit/directives/keyed.js'
 
 import '@material/web/button/outlined-button'
-import '@material/web/button/text-button'
-import '@material/web/dialog/dialog'
-import '@material/web/list/list'
-import '@material/web/list/list-item'
 import '@material/web/select/filled-select'
 import '@material/web/select/select-option'
 import '@material/web/textfield/filled-text-field'
 
+import {supportsPersistentAccessTokens} from '../components/GrampsjsAccessTokens.js'
 import '../components/GrampsjsCollapsibleSection.js'
 import '../components/GrampsjsFormSelectObjectList.js'
 import {userRoles} from '../components/GrampsjsFormUser.js'
 import '../components/GrampsjsIcon.js'
+import '../components/GrampsjsOidcAccounts.js'
 import '../components/GrampsjsShareUrl.js'
 import '../components/GrampsjsSysinfo.js'
 import '../components/GrampsjsTaskProgressIndicator.js'
@@ -23,19 +22,14 @@ import {GrampsjsView} from './GrampsjsView.js'
 import {mdiCheck, mdiContentCopy} from '@mdi/js'
 import {
   __APIHOST__,
+  apiGetOIDCConfig,
   TREE_CONFIG_PRIMARY_COLOR,
   TREE_CONFIG_SECONDARY_COLOR,
 } from '../api.js'
-import {apiVersionAtLeast, fireEvent} from '../util.js'
+import {fireEvent} from '../util.js'
 import {applyScheme, DEFAULT_PRIMARY, DEFAULT_SECONDARY} from '../theme.js'
 import {DEFAULT_TREE_VIEW, TREE_VIEWS} from '../treeDefaults.js'
-
-const PERSISTENT_ACCESS_TOKEN_SCOPES = [
-  {
-    scope: 'anniversaries_ics',
-    label: 'Anniversary calendar subscription',
-  },
-]
+import {SYMBOL_SET_DEFAULT, SYMBOL_SET_OPTIONS} from '../symbols.js'
 
 export class GrampsjsViewSettingsUser extends GrampsjsView {
   static get styles() {
@@ -47,26 +41,6 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
           flex-wrap: wrap;
           align-items: center;
           gap: 8px;
-        }
-
-        .access-token-list {
-          max-width: 720px;
-          padding: 0;
-        }
-
-        .access-token-list md-list-item {
-          --md-list-item-label-text-size: 1rem;
-          --md-list-item-supporting-text-color: var(
-            --md-sys-color-on-surface-variant
-          );
-        }
-
-        .access-token-error {
-          color: var(--md-sys-color-error);
-        }
-
-        code {
-          overflow-wrap: anywhere;
         }
 
         h3 {
@@ -105,8 +79,8 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
       _translations: {type: Array},
       _langLoading: {type: Boolean},
       _tokenCopied: {type: Boolean},
-      _accessTokenStates: {type: Object},
-      _pendingAccessTokenScope: {type: String},
+      _localAuthDisabled: {type: Boolean},
+      _hasLinkedAccount: {type: Boolean},
     }
   }
 
@@ -116,13 +90,8 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
     this._translations = []
     this._langLoading = false
     this._tokenCopied = false
-    this._accessTokenStates = Object.fromEntries(
-      PERSISTENT_ACCESS_TOKEN_SCOPES.map(({scope}) => [
-        scope,
-        {status: 'idle', error: ''},
-      ])
-    )
-    this._pendingAccessTokenScope = ''
+    this._localAuthDisabled = false
+    this._hasLinkedAccount = false
   }
 
   renderContent() {
@@ -132,7 +101,7 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
       </p>
 
       <grampsjs-collapsible-section
-        title="${this._('Account')}"
+        heading="${this._('Account')}"
         description="${this._(
           'Profile info, credentials, and account security'
         )}"
@@ -161,31 +130,43 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
 
         <h3>${this._('Change E-mail')}</h3>
         ${this.renderChangeEmail()}
-
-        <h3>${this._('Change password')}</h3>
-        ${this.renderChangePw()}
-        ${this._supportsPersistentAccessTokens()
+        ${this._localAuthDisabled
+          ? ''
+          : html`
+              <h3>${this._('Change password')}</h3>
+              ${this.renderChangePw()}
+            `}
+        ${supportsPersistentAccessTokens(this.appState?.dbInfo)
           ? html`
               <h3>${this._('Access tokens')}</h3>
-              ${this.renderAccessTokens()}
+              <grampsjs-access-tokens
+                .appState="${this.appState}"
+              ></grampsjs-access-tokens>
             `
           : ''}
+        <grampsjs-oidc-accounts
+          @oidc-accounts:changed="${this._handleOidcAccountsChanged}"
+          .appState="${this.appState}"
+          username="${this._userInfo?.name || ''}"
+        ></grampsjs-oidc-accounts>
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Appearance')}"
+        heading="${this._('Appearance')}"
         description="${this._('Display preferences saved on this device')}"
       >
         <h3>${this._('Select language')}</h3>
         ${this.renderLangSelect()}
         <h3>${this._('Select theme')}</h3>
         ${this.renderThemeSelect()}
+        <h3>${this._('Genealogical symbols')}</h3>
+        ${this.renderSymbolsSelect()}
         <h3>${this._('Family tree preferences')}</h3>
         ${this.renderTreePreferences()}
       </grampsjs-collapsible-section>
 
       <grampsjs-collapsible-section
-        title="${this._('Developer Tools')}"
+        heading="${this._('Developer Tools')}"
         description="${this._('Access the interactive API documentation')}"
       >
         ${this.renderApiToken()}
@@ -194,27 +175,32 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
   }
 
   renderLangSelect() {
-    return html`
-      <md-filled-select
-        id="select-language"
-        label="${this._langLoading
-          ? this._('Loading items...')
-          : this._('Language')}"
-        @change="${this._handleLangSelected}"
-        ?disabled="${this._langLoading}"
-      >
-        ${this._translations.map(
-          langObj => html`
-            <md-select-option
-              value="${langObj.language}"
-              ?selected="${langObj.language === this.appState.settings.lang}"
-              >${langObj.native}</md-select-option
-            >
-          `,
-          this
-        )}
-      </md-filled-select>
-    `
+    // md-select only picks up the selected option on its first render, but
+    // the options arrive later, so render it anew once they are loaded.
+    return keyed(
+      this._translations.length,
+      html`
+        <md-filled-select
+          id="select-language"
+          label="${this._langLoading
+            ? this._('Loading items...')
+            : this._('Language')}"
+          @change="${this._handleLangSelected}"
+          ?disabled="${this._langLoading}"
+        >
+          ${this._translations.map(
+            langObj => html`
+              <md-select-option
+                value="${langObj.language}"
+                ?selected="${langObj.language === this.appState.settings.lang}"
+                >${langObj.native}</md-select-option
+              >
+            `,
+            this
+          )}
+        </md-filled-select>
+      `
+    )
   }
 
   _handleLangSelected(event) {
@@ -227,8 +213,8 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
   firstUpdated() {
     if (this.active) {
       this._fetchOwnUserDetails()
-      this._loadAccessTokenStatusesIfNeeded()
     }
+    this._fetchAuthConfig()
   }
 
   update(changed) {
@@ -237,11 +223,8 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
       if (!this._langLoading && this._translations.length === 0) {
         this._fetchDataLang()
       }
-    }
-    if (this.active && changed.has('active')) {
-      this._loadAccessTokenStatusesIfNeeded(true)
-    } else if (this.active && changed.has('appState')) {
-      this._loadAccessTokenStatusesIfNeeded()
+      this.renderRoot.querySelector('grampsjs-access-tokens')?.refresh()
+      this.renderRoot.querySelector('grampsjs-oidc-accounts')?.refresh()
     }
   }
 
@@ -296,6 +279,33 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
     } catch {
       applyScheme(DEFAULT_PRIMARY, DEFAULT_SECONDARY, theme)
     }
+  }
+
+  renderSymbolsSelect() {
+    const symbolSet = this.appState.settings.symbolSet ?? SYMBOL_SET_DEFAULT
+    return html`
+      <md-filled-select
+        id="select-symbols"
+        label="${this._('Genealogical symbols')}"
+        @change="${this._handleSymbolsSelected}"
+      >
+        ${SYMBOL_SET_OPTIONS.map(
+          ({value, label}) => html`
+            <md-select-option value="${value}" ?selected=${value === symbolSet}>
+              ${this._(label)}
+            </md-select-option>
+          `
+        )}
+      </md-filled-select>
+    `
+  }
+
+  _handleSymbolsSelected(event) {
+    const candidate = event.target.value || SYMBOL_SET_DEFAULT
+    const symbolSet = SYMBOL_SET_OPTIONS.some(({value}) => value === candidate)
+      ? candidate
+      : SYMBOL_SET_DEFAULT
+    this.appState.updateSettings({symbolSet})
   }
 
   renderTreePreferences() {
@@ -368,6 +378,7 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
           id="change-full-name"
           label="${this._('Full Name')}"
           value="${this._userInfo?.full_name || ''}"
+          supporting-text="${this._idpHint()}"
         ></md-filled-text-field>
         <md-outlined-button @click="${this._changeFullName}">
           ${this._('Save')}
@@ -383,6 +394,7 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
           id="change-email"
           label="${this._('New E-mail')}"
           value="${this._userInfo?.email ? this._userInfo.email : ''}"
+          supporting-text="${this._idpHint()}"
         ></md-filled-text-field>
       </p>
       <p>
@@ -440,213 +452,6 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
         </md-outlined-button>
       </p>
     `
-  }
-
-  renderAccessTokens() {
-    const activeTokens = PERSISTENT_ACCESS_TOKEN_SCOPES.filter(
-      ({scope}) => this._accessTokenStates[scope]?.status === 'active'
-    )
-    const isLoading = PERSISTENT_ACCESS_TOKEN_SCOPES.some(({scope}) =>
-      ['idle', 'loading'].includes(this._accessTokenStates[scope]?.status)
-    )
-    const hasUnavailableTokens = PERSISTENT_ACCESS_TOKEN_SCOPES.some(
-      ({scope}) => this._accessTokenStates[scope]?.status === 'unavailable'
-    )
-    return html`
-      <p>
-        ${this._(
-          'Applications and services can use persistent access tokens to access limited features of your account.'
-        )}
-      </p>
-      ${activeTokens.length
-        ? html`
-            <md-list class="access-token-list">
-              ${activeTokens.map(
-                ({scope, label}) => html`
-                  <md-list-item type="text" noninteractive>
-                    <div slot="headline">${this._(label)}</div>
-                    <div slot="supporting-text" aria-live="polite">
-                      ${this._('Scope')}: <code>${scope}</code>
-                      ${this._accessTokenStates[scope]?.error
-                        ? html`
-                            <span class="access-token-error">
-                              &middot; ${this._accessTokenStates[scope].error}
-                            </span>
-                          `
-                        : ''}
-                    </div>
-                    <md-outlined-button
-                      slot="end"
-                      @click="${() =>
-                        this._requestAccessTokenRevocation(scope)}"
-                    >
-                      ${this._('Revoke')}
-                    </md-outlined-button>
-                  </md-list-item>
-                `
-              )}
-            </md-list>
-          `
-        : ''}
-      ${isLoading
-        ? html`<p aria-live="polite">${this._('Loading...')}</p>`
-        : ''}
-      ${!isLoading && !hasUnavailableTokens && activeTokens.length === 0
-        ? html`<p aria-live="polite">${this._('No active access tokens.')}</p>`
-        : ''}
-      ${hasUnavailableTokens
-        ? html`
-            <p class="access-token-error" role="alert">
-              ${this._('Some access tokens could not be loaded.')}
-            </p>
-            <p>
-              <md-outlined-button
-                @click="${this._retryUnavailableAccessTokens}"
-              >
-                ${this._('Retry')}
-              </md-outlined-button>
-            </p>
-          `
-        : ''}
-      ${this._pendingAccessTokenScope
-        ? this._renderAccessTokenRevocationDialog()
-        : ''}
-    `
-  }
-
-  _supportsPersistentAccessTokens() {
-    return apiVersionAtLeast(this.appState?.dbInfo, 3, 18)
-  }
-
-  _accessTokenEndpoint(scope) {
-    return `/api/users/-/access-tokens/${encodeURIComponent(scope)}/`
-  }
-
-  _retryUnavailableAccessTokens() {
-    for (const {scope} of PERSISTENT_ACCESS_TOKEN_SCOPES) {
-      if (this._accessTokenStates[scope]?.status === 'unavailable') {
-        this._fetchAccessTokenStatus(scope)
-      }
-    }
-  }
-
-  _setAccessTokenState(scope, state) {
-    this._accessTokenStates = {
-      ...this._accessTokenStates,
-      [scope]: state,
-    }
-  }
-
-  _loadAccessTokenStatusesIfNeeded(force = false) {
-    if (!this._supportsPersistentAccessTokens()) {
-      return
-    }
-    for (const {scope} of PERSISTENT_ACCESS_TOKEN_SCOPES) {
-      const status = this._accessTokenStates[scope]?.status
-      if (status === 'idle' || (force && status !== 'loading')) {
-        this._fetchAccessTokenStatus(scope)
-      }
-    }
-  }
-
-  async _fetchAccessTokenStatus(scope) {
-    if (this._accessTokenStates[scope]?.status === 'loading') {
-      return
-    }
-    this._setAccessTokenState(scope, {status: 'loading', error: ''})
-    try {
-      const result = await this.appState.apiGet(
-        this._accessTokenEndpoint(scope)
-      )
-      if ('error' in result) {
-        this._setAccessTokenState(scope, {
-          status: 'unavailable',
-          error: result.error,
-        })
-        return
-      }
-      this._setAccessTokenState(scope, {
-        status: result.data?.active ? 'active' : 'inactive',
-        error: '',
-      })
-    } catch (error) {
-      this._setAccessTokenState(scope, {
-        status: 'unavailable',
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
-  _requestAccessTokenRevocation(scope) {
-    if (this._accessTokenStates[scope]?.status === 'active') {
-      this._pendingAccessTokenScope = scope
-    }
-  }
-
-  _cancelAccessTokenRevocation() {
-    this._pendingAccessTokenScope = ''
-  }
-
-  _renderAccessTokenRevocationDialog() {
-    const token = PERSISTENT_ACCESS_TOKEN_SCOPES.find(
-      ({scope}) => scope === this._pendingAccessTokenScope
-    )
-    return html`
-      <md-dialog open @cancel="${this._cancelAccessTokenRevocation}">
-        <span slot="headline">${this._('Revoke access token?')}</span>
-        <div slot="content">
-          <p><strong>${this._(token?.label || '')}</strong></p>
-          <p>
-            ${this._(
-              'Revoking this token will immediately stop any application or service using it.'
-            )}
-          </p>
-        </div>
-        <div slot="actions">
-          <md-text-button @click="${this._cancelAccessTokenRevocation}">
-            ${this._('Cancel')}
-          </md-text-button>
-          <md-text-button @click="${this._confirmAccessTokenRevocation}">
-            ${this._('Revoke')}
-          </md-text-button>
-        </div>
-      </md-dialog>
-    `
-  }
-
-  async _confirmAccessTokenRevocation() {
-    const scope = this._pendingAccessTokenScope
-    this._pendingAccessTokenScope = ''
-    if (!scope || this._accessTokenStates[scope]?.status !== 'active') {
-      return
-    }
-
-    this._setAccessTokenState(scope, {status: 'loading', error: ''})
-    try {
-      const result = await this.appState.apiDelete(
-        this._accessTokenEndpoint(scope),
-        {dbChanged: false}
-      )
-      if ('error' in result) {
-        this._setAccessTokenState(scope, {
-          status: 'active',
-          error: result.error,
-        })
-        fireEvent(this, 'grampsjs:error', {message: result.error})
-        return
-      }
-      this._setAccessTokenState(scope, {status: 'inactive', error: ''})
-      fireEvent(this, 'grampsjs:notification', {
-        message: this._('Access token revoked'),
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this._setAccessTokenState(scope, {
-        status: 'active',
-        error: message,
-      })
-      fireEvent(this, 'grampsjs:error', {message})
-    }
   }
 
   async _copyToken() {
@@ -802,6 +607,27 @@ export class GrampsjsViewSettingsUser extends GrampsjsView {
       this.error = false
       this._userInfo = data.data
     }
+  }
+
+  // the identity provider may overwrite full name and e-mail at each sign-in
+  _idpHint() {
+    return this._hasLinkedAccount
+      ? this._(
+          'Your full name and e-mail address may be updated whenever you sign in with a linked account.'
+        )
+      : ''
+  }
+
+  _handleOidcAccountsChanged(e) {
+    this._hasLinkedAccount = e.detail.count > 0
+  }
+
+  // users without local auth have no password to change
+  async _fetchAuthConfig() {
+    const config = await apiGetOIDCConfig()
+    this._localAuthDisabled = Boolean(
+      config?.enabled && config.disable_local_auth
+    )
   }
 }
 

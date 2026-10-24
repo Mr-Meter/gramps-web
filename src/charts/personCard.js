@@ -9,6 +9,8 @@ import {
   colorAddPersonButtons,
 } from './addPersonButton.js'
 import {chartPalette} from './palette.js'
+import {isHoverDevice} from './util.js'
+import {SYMBOL_SETS, SYMBOL_SET_DEFAULT} from '../symbols.js'
 
 // Pattern ids must be unique in the document, and the same person can be
 // shown in several cards
@@ -40,10 +42,6 @@ function givenName(p, length) {
   return `${p.name_given || '…'} ${p.name_patronymic[0]}.`
 }
 
-function isHoverDevice() {
-  return !window.matchMedia('(hover: none)').matches
-}
-
 // Appends the visible part of a person card, centred on each node of the
 // selection. `profile(d)` returns the person's profile, and `imageUrl(d)`
 // returns the URL of their image or an empty string. Colours come from
@@ -57,6 +55,8 @@ export function appendPersonCard(
     boxHeight = 90,
     imgPadding = 10,
     nameDisplayFormat = chartNameDisplayFormat.surnameThenGiven,
+    birthSymbol = SYMBOL_SETS[SYMBOL_SET_DEFAULT].birthSymbol,
+    deathSymbol = SYMBOL_SETS[SYMBOL_SET_DEFAULT].deathSymbol,
     palette = chartPalette,
   }
 ) {
@@ -102,8 +102,16 @@ export function appendPersonCard(
         surnameFirst ? givenName(p, length) : p.name_surname || '…',
       weight: 500,
     },
-    {show: p => p?.birth?.date, text: p => `*${p.birth.date}`, weight: 350},
-    {show: p => p?.death?.date, text: p => `†${p.death.date}`, weight: 350},
+    {
+      show: p => p?.birth?.date,
+      text: p => `${birthSymbol} ${p.birth.date}`,
+      weight: 350,
+    },
+    {
+      show: p => p?.death?.date,
+      text: p => `${deathSymbol} ${p.death.date}`,
+      weight: 350,
+    },
   ]
   lines.forEach((line, i) => {
     nodes
@@ -167,6 +175,10 @@ export function setPersonCardInteraction(
         fireEvent(this, 'pedigree:person-selected', {grampsId})
       }
     })
+  // The preview shows while the pointer is on the card itself, so buttons
+  // next to the card in the node do not show it
+  nodes
+    .select('.person-card')
     .on('mouseenter', function (event, d) {
       const grampsId = profile(d)?.gramps_id
       if (canEdit || !grampsId || !isHoverDevice()) {
@@ -213,6 +225,8 @@ export function drawChangedCards(
   {
     getImageUrl = () => '',
     nameDisplayFormat,
+    birthSymbol,
+    deathSymbol,
     palette = chartPalette,
     boxWidth,
     boxHeight,
@@ -224,6 +238,8 @@ export function drawChangedCards(
       person: d.person,
       imageUrl: getImageUrl(d),
       nameDisplayFormat,
+      birthSymbol,
+      deathSymbol,
       palette,
     }
     const previous = cardInputs.get(this)
@@ -247,6 +263,8 @@ export function drawChangedCards(
     boxWidth,
     boxHeight,
     nameDisplayFormat,
+    birthSymbol,
+    deathSymbol,
     palette,
   })
 }
@@ -274,9 +292,7 @@ export function updatePersonCardInteraction(
 // Removes what `setPersonCardInteraction` added: click and hover handling,
 // cursors and add person buttons
 export function clearPersonCardInteraction(nodes) {
-  nodes
-    .style('cursor', null)
-    .on('click mouseenter mouseleave', null)
-    .selectAll('.add-person-btn')
-    .remove()
+  nodes.style('cursor', null).on('click', null)
+  nodes.select('.person-card').on('mouseenter mouseleave', null)
+  nodes.selectAll('.add-person-btn').remove()
 }

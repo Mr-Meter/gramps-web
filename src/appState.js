@@ -86,9 +86,11 @@ export function getInitialAppState() {
       status => {
         const entry = activeTasks.get(taskId)
         // If the task result has expired from Redis (TTL elapsed), Celery
-        // returns PENDING indefinitely.  Detect this via createdAt age and
-        // stop polling to avoid spinning forever.
-        if (status.state === 'PENDING' && entry?.createdAt) {
+        // returns PENDING indefinitely for tasks the backend does not track
+        // (no status field, or status "unknown").  Detect this via createdAt
+        // age and stop polling to avoid spinning forever.
+        const untracked = !status.status || status.status === 'unknown'
+        if (untracked && status.state === 'PENDING' && entry?.createdAt) {
           const age = Date.now() / 1000 - entry.createdAt
           if (age > TASK_TTL_SECONDS) {
             addNotification({
@@ -120,7 +122,7 @@ export function getInitialAppState() {
           // Add a persistent entry to the notification log.
           if (status.state === 'SUCCESS') {
             addNotification({
-              type: 'info',
+              type: 'success',
               message: updatedEntry?.label ?? taskId,
               source: 'task',
               detail: status.result_object ?? {},
@@ -181,10 +183,9 @@ export function getInitialAppState() {
   async function loadActiveTasks() {
     const res = await apiGet(auth, '/api/tasks/?include_state=true')
     if (!res.data) return
-    const runningStates = ['PENDING', 'STARTED', 'PROGRESS']
     for (const t of res.data) {
       if (
-        runningStates.includes(t.state) &&
+        isTaskActive(t) &&
         isTaskInTree(t, auth.tabTreeId) &&
         !activeTasks.has(t.task_id) &&
         stripTaskPrefix(t.name) in TASK_LABELS
@@ -199,9 +200,14 @@ export function getInitialAppState() {
           const parsed = new Date(str).getTime() / 1000
           createdAt = Number.isFinite(parsed) ? parsed : Date.now() / 1000
         }
-        // Skip tasks older than the Redis TTL — they appear as PENDING because
-        // their result expired, not because they are genuinely still running.
-        if (createdAt && Date.now() / 1000 - createdAt > TASK_TTL_SECONDS) {
+        // Without a status field, skip tasks older than the Redis TTL — they
+        // appear as PENDING because their result expired, not because they
+        // are genuinely still running.
+        if (
+          !t.status &&
+          createdAt &&
+          Date.now() / 1000 - createdAt > TASK_TTL_SECONDS
+        ) {
           // eslint-disable-next-line no-continue
           continue
         }
@@ -301,6 +307,7 @@ export function getInitialAppState() {
       canUseChat: false,
       canUpgradeTree: false,
       canEditTree: false,
+      canManageBackups: false,
       canViewOtherTree: false,
       branches: null,
     },
@@ -352,7 +359,13 @@ export function getInitialAppState() {
         activeSaveCount += 1
         notifyCounters()
       }
-      return apiPutPostDelete(auth, 'DELETE', endpoint, {}, options)
+      return apiPutPostDelete(
+        auth,
+        'DELETE',
+        endpoint,
+        options.payload ?? {},
+        options
+      )
         .then(result => (isSave ? completeSave(result) : result))
         .then(checkTreeMissing)
     },
@@ -433,6 +446,16 @@ function sameBranches(a, b) {
   return a.length === b.length && a.every((handle, i) => handle === b[i])
 }
 
+// Newer backends report a `status` field and keep it accurate (lost and
+// pre-upgrade tasks are neither queued nor running). Older backends only have
+// the Celery state.
+export function isTaskActive(task) {
+  if (task?.status) {
+    return ['queued', 'running'].includes(task.status)
+  }
+  return ['PENDING', 'STARTED', 'PROGRESS'].includes(task?.state)
+}
+
 export function appStateUpdatePermissions(appState) {
   const rawPermissions = getPermissions()
   const permissions = {
@@ -443,6 +466,7 @@ export function appStateUpdatePermissions(appState) {
     canUseChat: rawPermissions.includes('UseChat'),
     canUpgradeTree: rawPermissions.includes('UpgradeSchema'),
     canEditTree: rawPermissions.includes('EditTree'),
+    canManageBackups: rawPermissions.includes('ManageBackups'),
     // Granted to server Administrators only, not Owners - used to gate
     // server-wide actions like creating a new tree.
     canViewOtherTree: rawPermissions.includes('ViewOtherTree'),

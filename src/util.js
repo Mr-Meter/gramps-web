@@ -52,6 +52,7 @@ import {
 import {renderIconSvg, ringsIconPath} from './icons.js'
 import './components/GrampsjsIcon.js'
 import {frontendLanguages} from './strings.js'
+import {getSymbols} from './symbols.js'
 
 dayjs.extend(relativeTime)
 
@@ -156,17 +157,17 @@ export function citationTitleFromProfile(citationProfile) {
   if (!citationProfile.source?.title) {
     return ''
   }
-  return `${citationProfile.source?.title || ''}
-          ${citationProfile.page ? ` (${citationProfile.page})` : ''}`
+  const {title} = citationProfile.source
+  return citationProfile.page ? `${title} (${citationProfile.page})` : title
 }
 
 export function eventTitleFromProfile(eventProfile, date = true) {
-  if (eventProfile.summary) {
-    return html`${eventProfile.summary}${date && eventProfile.date
-      ? ` (${eventProfile.date})`
-      : ''}`
+  if (!eventProfile.summary) {
+    return ''
   }
-  return ''
+  return date && eventProfile.date
+    ? `${eventProfile.summary} (${eventProfile.date})`
+    : eventProfile.summary
 }
 
 export function getName(obj, type) {
@@ -320,6 +321,13 @@ export const objectTypeToEndpoint = {
   object: 'objects',
 }
 
+// Strip the keys the API adds to an object it returns, leaving the object as
+// Gramps stores it, ready to send back in a PUT
+export function toWritableObject(obj) {
+  const {extended, profile, backlinks, formatted, ...writable} = obj
+  return writable
+}
+
 // Gramps object class names, as used e.g. by the change history API
 export const endpointToObjectClass = {
   people: 'Person',
@@ -459,13 +467,18 @@ export function objectDescription(type, obj, strings) {
   }
 }
 
-export function objectDetail(type, obj, strings) {
+export function objectDetail(type, obj, strings, settings = {}) {
+  const symbols = getSymbols(settings, value => translate(strings, value))
   switch (type) {
     case 'person':
       return `
-    ${obj?.profile?.birth?.date ? `∗ ${obj.profile.birth.date}` : ''}${
-        obj?.profile?.birth?.place && obj?.profile?.birth?.date ? ', ' : ''
-      }${obj?.profile?.birth?.place_name || obj?.profile?.birth?.place || ''}
+    ${
+      obj?.profile?.birth?.date
+        ? `${symbols.birthSymbol} ${obj.profile.birth.date}`
+        : ''
+    }${obj?.profile?.birth?.place && obj?.profile?.birth?.date ? ', ' : ''}${
+        obj?.profile?.birth?.place_name || obj?.profile?.birth?.place || ''
+      }
     `
     // case 'family':
     //   return ''
@@ -538,6 +551,7 @@ export function debounce(func, wait) {
   }
 }
 
+// Name of an object as plain text, from its profile; empty if it has none
 export function getNameFromProfile(obj, type) {
   switch (type) {
     case 'person':
@@ -547,18 +561,33 @@ export function getNameFromProfile(obj, type) {
     case 'family':
       return familyTitleFromProfile(obj)
     case 'place':
-      return obj.name
+      return obj.name || ''
     case 'source':
-      return obj.title
+      return obj.title || ''
     case 'repository':
-      return obj.name
+      return obj.name || ''
     case 'citation':
       return citationTitleFromProfile(obj)
     case 'media':
-      return obj.desc
+      return obj.desc || ''
     default:
       return ''
   }
+}
+
+// Like Gramps desktop, a place that other places are enclosed by can't be
+// deleted, or they would point to a place that no longer exists. Places that
+// are deleted along with it, including itself, don't count.
+export async function getEnclosingPlaces(appState, handles) {
+  const deleted = new Set(handles)
+  const results = await Promise.all(
+    handles.map(handle =>
+      appState.apiGet(`/api/places/${handle}?backlinks=true`)
+    )
+  )
+  return handles.filter((handle, i) =>
+    (results[i]?.data?.backlinks?.place ?? []).some(ref => !deleted.has(ref))
+  )
 }
 
 export function fireEvent(target, name, detail) {
@@ -707,6 +736,23 @@ export const filterMime = {
   'application/pdf': 'PDF',
 }
 
+// Geodata types that browsers often report as empty, text/xml,
+// application/json or application/zip. The backend takes the MIME type from
+// the upload's Content-Type and derives the stored file extension from it.
+const MIME_BY_EXTENSION = {
+  geojson: 'application/geo+json',
+  gpx: 'application/gpx+xml',
+  kml: 'application/vnd.google-earth.kml+xml',
+  kmz: 'application/vnd.google-earth.kmz',
+}
+
+export function fileWithMimeType(file) {
+  const extension = file.name.split('.').pop().toLowerCase()
+  const type = MIME_BY_EXTENSION[extension]
+  if (!type || file.type === type) return file
+  return new File([file], file.name, {type, lastModified: file.lastModified})
+}
+
 export const reportCategoryIcon = {
   0: 'description', // text
   1: 'pie_chart', // draw
@@ -765,6 +811,129 @@ export function normalizeRect(rect) {
 
 export function isValidRect(rect) {
   return normalizeRect(rect) !== null
+}
+
+// Object types whose media list can reference a region of an image
+export const mediaRegionObjectTypes = [
+  'person',
+  'family',
+  'event',
+  'place',
+  'source',
+  'citation',
+]
+
+// Whether two rectangles have the same coordinates, in the same order
+export function rectEqual(A, B) {
+  return (
+    Array.isArray(A) &&
+    Array.isArray(B) &&
+    A.length === B.length &&
+    A.every((e, i) => e === B[i])
+  )
+}
+
+function _rectArea([left, top, right, bottom]) {
+  return Math.max(0, right - left) * Math.max(0, bottom - top)
+}
+
+// Intersection over union of two rectangles, between 0 and 1
+export function rectOverlap(A, B) {
+  const intersection = _rectArea([
+    Math.max(A[0], B[0]),
+    Math.max(A[1], B[1]),
+    Math.min(A[2], B[2]),
+    Math.min(A[3], B[3]),
+  ])
+  const union = _rectArea(A) + _rectArea(B) - intersection
+  return union > 0 ? intersection / union : 0
+}
+
+function _clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max)
+}
+
+// Rectangle moved (handle 'move') or resized by one of its corners (handle
+// 'nw', 'ne', 'sw' or 'se') by dx and dy percent, kept inside the image and
+// at least 1 percent wide and high
+export function modifyRect(rect, handle, dx, dy) {
+  const [left, top, right, bottom] = rect
+  if (handle === 'move') {
+    const width = right - left
+    const height = bottom - top
+    const newLeft = _clamp(Math.round(left + dx), 0, 100 - width)
+    const newTop = _clamp(Math.round(top + dy), 0, 100 - height)
+    return [newLeft, newTop, newLeft + width, newTop + height]
+  }
+  const newLeft = handle.includes('w')
+    ? _clamp(Math.round(left + dx), 0, right - 1)
+    : left
+  const newRight = handle.includes('e')
+    ? _clamp(Math.round(right + dx), left + 1, 100)
+    : right
+  const newTop = handle.includes('n')
+    ? _clamp(Math.round(top + dy), 0, bottom - 1)
+    : top
+  const newBottom = handle.includes('s')
+    ? _clamp(Math.round(bottom + dy), top + 1, 100)
+    : bottom
+  return [newLeft, newTop, newRight, newBottom]
+}
+
+// Regions of an image, collected from the media references of its backlinks.
+// An object can reference several regions of the same image.
+export function getMediaRegions(media) {
+  const backlinks = media?.extended?.backlinks || {}
+  const references = media?.profile?.references || {}
+  return Object.keys(backlinks).flatMap(key =>
+    backlinks[key].flatMap((obj, index) => {
+      const refs = references[key] || []
+      const label =
+        refs.length > index
+          ? getNameFromProfile(refs[index] || {}, key) || obj.gramps_id
+          : '...'
+      return (obj?.media_list || [])
+        .filter(mobj => mobj.ref === media.handle && mobj.rect?.length > 0)
+        .map(mobj => ({
+          rect: mobj.rect,
+          type: key,
+          label,
+          grampsId: obj.gramps_id,
+          handle: obj.handle,
+        }))
+    })
+  )
+}
+
+// Media list with a reference to a region of an image appended, unless the
+// list already references that region
+export function addMediaRegion(mediaList, mediaHandle, rect) {
+  const exists = mediaList.some(
+    mobj =>
+      mobj.ref === mediaHandle &&
+      mobj.rect?.length > 0 &&
+      rectEqual(mobj.rect, rect)
+  )
+  return exists ? mediaList : [...mediaList, {ref: mediaHandle, rect}]
+}
+
+// Media list with the first reference to a region of an image moved to a new
+// rectangle
+export function replaceMediaRegion(mediaList, mediaHandle, oldRect, rect) {
+  const index = mediaList.findIndex(
+    mobj => mobj.ref === mediaHandle && rectEqual(mobj.rect, oldRect)
+  )
+  if (index === -1) {
+    return mediaList
+  }
+  return mediaList.map((mobj, i) => (i === index ? {...mobj, rect} : mobj))
+}
+
+// Media list without the references to a region of an image
+export function removeMediaRegion(mediaList, mediaHandle, rect) {
+  return mediaList.filter(
+    mobj => mobj.ref !== mediaHandle || !rectEqual(mobj.rect, rect)
+  )
 }
 
 export function clickKeyHandler(event) {
@@ -964,6 +1133,86 @@ export function menuSelectionHandler(select) {
       select(initiator)
     }
   }
+}
+
+// Result of a finished task status as an object. Uses `result_object` and
+// falls back to the JSON string in `result`.
+export function getTaskResult(status) {
+  if (status?.result_object) {
+    return status.result_object
+  }
+  try {
+    return JSON.parse(status?.result || '{}') ?? {}
+  } catch {
+    return {}
+  }
+}
+
+const RATE_LIMIT_UNITS = [
+  ['day', 86400],
+  ['hour', 3600],
+  ['minute', 60],
+  ['second', 1],
+]
+
+// Formats a rate limit window in seconds in the largest whole unit, as
+// "day" for a single unit and "2 days" for several.
+function formatRateLimitWindow(seconds, locale) {
+  const [unit, unitSeconds] = RATE_LIMIT_UNITS.find(
+    ([, s]) => seconds % s === 0
+  )
+  const count = seconds / unitSeconds
+  if (count === 1) {
+    return new Intl.DisplayNames(locale, {type: 'dateTimeField'}).of(unit)
+  }
+  return new Intl.NumberFormat(locale, {
+    style: 'unit',
+    unit,
+    unitDisplay: 'long',
+  }).format(count)
+}
+
+// Formats structured rate limits from the metadata endpoint, a list of
+// `{amount, window_seconds}`, as e.g. "1/day, 100/2 hours".
+export function formatRateLimit(limits, lang = 'en') {
+  const valid = (limits ?? []).filter(
+    l =>
+      Number.isInteger(l?.amount) &&
+      Number.isInteger(l?.window_seconds) &&
+      l.window_seconds > 0
+  )
+  if (!valid.length) {
+    return ''
+  }
+  let locale = (lang || 'en').replace('_', '-')
+  try {
+    Intl.getCanonicalLocales(locale)
+  } catch {
+    locale = 'en'
+  }
+  return valid
+    .map(
+      l =>
+        `${new Intl.NumberFormat(locale).format(
+          l.amount
+        )}/${formatRateLimitWindow(l.window_seconds, locale)}`
+    )
+    .join(', ')
+}
+
+// Formats a number of bytes with a decimal prefix, e.g. "1.5 MB".
+export function formatBytes(bytes) {
+  if (bytes === null) {
+    return null
+  }
+  if (bytes === 0) {
+    return '0 B'
+  }
+  const prefixes = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
+  const base = 1000
+  const exponent = Math.floor(Math.log10(bytes) / Math.log10(base))
+
+  return `${(bytes / base ** exponent).toFixed(1)} ${prefixes[exponent]}B`
 }
 
 //

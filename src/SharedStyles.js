@@ -196,6 +196,12 @@ export const sharedStyles = css`
     fill: var(--grampsjs-body-font-color-40);
   }
 
+  .event i {
+    color: var(--grampsjs-body-font-color-40);
+    font-size: 16px;
+    font-style: normal;
+  }
+
   .event i svg {
     height: 16px;
     width: auto;
@@ -247,6 +253,12 @@ export const sharedStyles = css`
     animation: 1.5s shine linear infinite;
   }
 
+  .card {
+    padding: 1em 1em;
+    border-radius: 16px;
+    background-color: var(--grampsjs-color-shade-230);
+  }
+
   .alert {
     background-color: var(--grampsjs-alert-background-color);
     border-left: 4px solid var(--grampsjs-alert-border-color);
@@ -283,6 +295,16 @@ export const sharedStyles = css`
     to {
       background-position-x: -200%;
     }
+  }
+
+  .button-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+
+  .button-row > grampsjs-task-progress-indicator {
+    display: flex;
   }
 
   grampsjs-task-progress-indicator.button {

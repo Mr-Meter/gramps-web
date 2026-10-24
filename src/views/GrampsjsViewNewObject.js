@@ -151,12 +151,25 @@ export class GrampsjsViewNewObject extends GrampsjsNewObjectTagsMixin(
 
   _renderCitationForm() {
     return html`
-      <h3>${this._('Citation')}</h3>
+      <h3 class="label">${this._('Citation')}</h3>
 
       <grampsjs-form-select-object-list
         multiple
         id="object-citation"
         objectType="citation"
+        .appState="${this.appState}"
+      ></grampsjs-form-select-object-list>
+    `
+  }
+
+  _renderMediaForm() {
+    return html`
+      <h3 class="label">${this._('Media')}</h3>
+
+      <grampsjs-form-select-object-list
+        multiple
+        id="object-media"
+        objectType="media"
         .appState="${this.appState}"
       ></grampsjs-form-select-object-list>
     `
@@ -234,6 +247,15 @@ export class GrampsjsViewNewObject extends GrampsjsNewObjectTagsMixin(
       this.data = {
         ...this.data,
         citation_list: e.detail.data ?? [],
+      }
+    }
+    if (originalTarget.id === 'object-media-list') {
+      this.data = {
+        ...this.data,
+        media_list: (e.detail.data ?? []).map(ref => ({
+          _class: 'MediaRef',
+          ref,
+        })),
       }
     }
   }

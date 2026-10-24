@@ -1,11 +1,16 @@
 import {describe, it, expect, vi} from 'vitest'
+import {render} from 'lit'
 import {
   chartDataUrl,
   chartDefinitions,
   chartSettingValues,
 } from '../../src/views/treeChartDefinitions.js'
 import {GrampsjsViewTree} from '../../src/views/GrampsjsViewTree.js'
-import {DEFAULT_TREE_VIEW, getTreeViewTabIndex} from '../../src/treeDefaults.js'
+import {
+  DEFAULT_TREE_VIEW,
+  TREE_VIEWS,
+  getTreeViewTabIndex,
+} from '../../src/treeDefaults.js'
 import {chartNameDisplayFormat} from '../../src/util.js'
 
 const rulesOf = url =>
@@ -21,8 +26,22 @@ describe('chart definitions', () => {
     expect(values).toEqual({
       ancestors: 2,
       descendants: 4,
+      orientation: 'horizontal',
       nameDisplayFormat: chartNameDisplayFormat.surnameThenGiven,
     })
+  })
+
+  it('counts a number below the minimum as the minimum', () => {
+    const values = chartSettingValues(chartDefinitions.hourglass, {
+      hourglassChartAnc: 0,
+      hourglassChartDesc: 0,
+    })
+    expect(values.ancestors).toBe(1)
+    expect(values.descendants).toBe(1)
+    const relationship = chartSettingValues(chartDefinitions.relationship, {
+      relationshipChartAnc: 0,
+    })
+    expect(relationship.separation).toBe(0)
   })
 
   it('fetches one more generation than the settings count', () => {
@@ -141,6 +160,41 @@ describe('GrampsjsViewTree', () => {
     expect(apiGet).toHaveBeenCalledTimes(2)
   })
 
+  it('gives each setting its own input when the chart changes', () => {
+    // The Material elements call attachInternals() in their constructor,
+    // which happy-dom does not implement
+    if (!HTMLElement.prototype.attachInternals) {
+      HTMLElement.prototype.attachInternals = () => ({
+        setFormValue() {},
+        setValidity() {},
+      })
+    }
+    const {view} = makeView()
+    view._ = s => s
+    const container = document.createElement('div')
+    const inputs = () =>
+      Object.fromEntries(
+        [...container.querySelectorAll('[id^="setting-"]')].map(input => [
+          input.id,
+          input,
+        ])
+      )
+    view._currentTabId = TREE_VIEWS.indexOf('hourglass')
+    render(view.renderControls(), container)
+    const hourglass = inputs()
+    // The descendant chart has one setting less before the orientation
+    view._currentTabId = TREE_VIEWS.indexOf('descendant')
+    render(view.renderControls(), container)
+    const descendant = inputs()
+    expect(Object.keys(descendant)).toEqual([
+      'setting-orientation',
+      'setting-nameDisplayFormat',
+    ])
+    expect(Object.values(hourglass)).not.toContain(
+      descendant['setting-nameDisplayFormat']
+    )
+  })
+
   it('records each selected person in the history, also the first one', () => {
     const {view} = makeView()
     // The first person is selected before the view is first updated
@@ -148,10 +202,151 @@ describe('GrampsjsViewTree', () => {
     view.grampsId = 'I2'
     view.willUpdate(new Map())
     expect(view._history).toEqual(['I1', 'I2'])
-    view._prevPerson()
-    view.willUpdate(new Map())
-    expect(view.grampsId).toBe('I1')
-    expect(view._history).toEqual(['I1'])
+  })
+
+  describe('URL', () => {
+    function makeRoutedView(path, settings = {}) {
+      const {view} = makeView(settings)
+      view.grampsId = ''
+      view.settings = settings
+      view.active = true
+      view.appState.path = {page: 'tree', pageId: '', pageId2: '', ...path}
+      const navs = []
+      view.addEventListener('nav', e => navs.push(e.detail))
+      // Stands in for the app, which loads the page of each URL
+      const update = () => {
+        view.willUpdate(new Map())
+        view.updated(new Map())
+      }
+      return {view, navs, update}
+    }
+
+    it('shows the chart and the person in the URL', () => {
+      const {view, navs, update} = makeRoutedView(
+        {pageId: 'fan', pageId2: 'I7'},
+        {homePerson: 'I3', treeDefaultView: 'descendant'}
+      )
+      update()
+      expect(view.chart).toBe('fan')
+      expect(view.grampsId).toBe('I7')
+      expect(navs).toEqual([])
+    })
+
+    it('completes a URL without chart or person', () => {
+      const {view, navs, update} = makeRoutedView(
+        {},
+        {homePerson: 'I3', treeDefaultView: 'descendant'}
+      )
+      update()
+      expect(view.chart).toBe('descendant')
+      expect(view.grampsId).toBe('I3')
+      expect(navs).toEqual([{path: 'tree/descendant/I3', replace: true}])
+    })
+
+    it('replaces an unknown chart in the URL with the preferred one', () => {
+      const {view, navs, update} = makeRoutedView(
+        {pageId: 'fan', pageId2: 'I7'},
+        {homePerson: 'I3'}
+      )
+      update()
+      view.appState.path = {page: 'tree', pageId: 'pedigree', pageId2: 'I7'}
+      update()
+      // the preferred chart is the default one: the whole tree in this fork
+      expect(navs).toEqual([
+        {path: `tree/${DEFAULT_TREE_VIEW}/I7`, replace: true},
+      ])
+    })
+
+    it('keeps the shown chart and person for a URL without them', () => {
+      const settings = {homePerson: 'I3', treeDefaultView: 'descendant'}
+      const {view, update} = makeRoutedView(
+        {pageId: 'fan', pageId2: 'I7'},
+        settings
+      )
+      update()
+      view.appState.path = {page: 'tree', pageId: '', pageId2: ''}
+      update()
+      expect(view.chart).toBe('fan')
+      expect(view.grampsId).toBe('I7')
+      // A new preferred chart is used
+      view.settings = {...settings, treeDefaultView: 'relationship'}
+      update()
+      expect(view.chart).toBe('relationship')
+    })
+
+    it('goes to the URL of a selected person or chart', () => {
+      const {view, navs, update} = makeRoutedView({
+        pageId: 'fan',
+        pageId2: 'I7',
+      })
+      update()
+      view._selectPerson({detail: {grampsId: 'I8'}})
+      view._handleTabChange({detail: {value: 'hourglass'}})
+      expect(navs).toEqual([
+        {path: 'tree/fan/I8', replace: false},
+        {path: 'tree/hourglass/I7', replace: false},
+      ])
+    })
+
+    it('goes to the URL of a person selected while not shown', () => {
+      const settings = {homePerson: 'I3', treeDefaultView: 'descendant'}
+      const {view, navs, update} = makeRoutedView(
+        {pageId: 'fan', pageId2: 'I7'},
+        settings
+      )
+      view.active = false
+      // The preferred chart, before the view was first shown
+      view._selectPerson({detail: {grampsId: 'I8'}})
+      view.active = true
+      update()
+      view.active = false
+      // The shown chart
+      view._selectPerson({detail: {grampsId: 'I9'}})
+      // A new preferred chart
+      view.settings = {...settings, treeDefaultView: 'relationship'}
+      view._selectPerson({detail: {grampsId: 'I10'}})
+      expect(navs).toEqual([
+        {path: 'tree/descendant/I8', replace: false},
+        {path: 'tree/fan/I9', replace: false},
+        {path: 'tree/relationship/I10', replace: false},
+      ])
+    })
+
+    it('goes back to the previous person in the shown chart', () => {
+      const {view, navs, update} = makeRoutedView({
+        pageId: 'ancestor',
+        pageId2: 'I1',
+      })
+      update()
+      view.appState.path = {page: 'tree', pageId: 'ancestor', pageId2: 'I2'}
+      update()
+      view.appState.path = {page: 'tree', pageId: 'hourglass', pageId2: 'I2'}
+      update()
+      expect(view._history).toEqual(['I1', 'I2'])
+      view._prevPerson()
+      expect(navs).toEqual([{path: 'tree/hourglass/I1', replace: false}])
+      // An update before the URL arrives
+      update()
+      expect(view._history).toEqual(['I1', 'I2'])
+      view.appState.path = {page: 'tree', pageId: 'hourglass', pageId2: 'I1'}
+      update()
+      expect(view._history).toEqual(['I1'])
+      // Browser back shows I2 as a newly shown person
+      view.appState.path = {page: 'tree', pageId: 'hourglass', pageId2: 'I2'}
+      update()
+      expect(view._history).toEqual(['I1', 'I2'])
+    })
+
+    it('waits for a home person for a URL without a person', () => {
+      const {view, navs, update} = makeRoutedView({})
+      update()
+      expect(view.grampsId).toBe('')
+      expect(navs).toEqual([{path: 'tree/ancestor', replace: true}])
+      view.appState.path = {page: 'tree', pageId: 'ancestor', pageId2: ''}
+      view.settings = {homePerson: 'I3'}
+      update()
+      expect(view.grampsId).toBe('I3')
+    })
   })
 
   it('does not pass people fetched for one chart to another', () => {
@@ -284,5 +479,80 @@ describe('GrampsjsViewTree', () => {
     await Promise.resolve()
     expect(view._data).toEqual([{handle: 'B'}])
     expect(view.loading).toBe(false)
+  })
+})
+
+describe('expanded branches', () => {
+  const flush = () => new Promise(resolve => setTimeout(resolve))
+
+  // A view of the ancestor chart of R (I1), with R and F (I2)
+  function makeBranchView() {
+    const {view, apiGet} = makeView()
+    view.willUpdate(new Map())
+    view._data = [
+      {handle: 'R', gramps_id: 'I1'},
+      {handle: 'F', gramps_id: 'I2'},
+    ]
+    apiGet.mockResolvedValue({
+      data: [
+        {handle: 'R', gramps_id: 'I1'},
+        {handle: 'F', gramps_id: 'I2'},
+        {handle: 'FF', gramps_id: 'I3'},
+      ],
+    })
+    const expand = (handle, direction = 'ancestors') =>
+      view._expandBranch({detail: {handle, direction}})
+    return {view, apiGet, expand}
+  }
+
+  const lastRules = apiGet => rulesOf(apiGet.mock.calls.at(-1)[0]).rules
+
+  it('fetches the people of the chart with those of the expanded branches', async () => {
+    const {view, apiGet, expand} = makeBranchView()
+    expand('F')
+    expect(lastRules(apiGet)).toEqual([
+      {name: 'IsLessThanNthGenerationAncestorOf', values: ['I1', 4]},
+      {name: 'IsLessThanNthGenerationDescendantOf', values: ['I1', 2]},
+      {name: 'IsLessThanNthGenerationAncestorOf', values: ['I2', 2]},
+    ])
+    // A second click while loading does not fetch again
+    expand('F')
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    // The branch opens with the people it needs
+    expect(view._expanded.size).toBe(0)
+    await flush()
+    expect(view._data.map(person => person.handle)).toEqual(['R', 'F', 'FF'])
+    expect([...view._expanded]).toEqual(['F'])
+  })
+
+  it('fetches children for a branch of descendants', () => {
+    const {apiGet, expand} = makeBranchView()
+    expand('F', 'descendants')
+    expect(lastRules(apiGet).at(-1)).toEqual({
+      name: 'IsLessThanNthGenerationDescendantOf',
+      values: ['I2', 2],
+    })
+  })
+
+  it('keeps the expanded branches when the people are fetched again', async () => {
+    const {view, apiGet, expand} = makeBranchView()
+    expand('F')
+    await flush()
+    view.handleUpdateStaleData()
+    expect(apiGet).toHaveBeenCalledTimes(2)
+    expect(lastRules(apiGet)).toHaveLength(3)
+    await flush()
+    expect([...view._expanded]).toEqual(['F'])
+  })
+
+  it('forgets the branches of another person', async () => {
+    const {view, apiGet, expand} = makeBranchView()
+    expand('F')
+    await flush()
+    view.grampsId = 'I2'
+    view.willUpdate(new Map())
+    expect(view._expanded.size).toBe(0)
+    view._fetchIfNeeded()
+    expect(lastRules(apiGet)).toHaveLength(2)
   })
 })

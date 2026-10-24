@@ -1,9 +1,13 @@
 import {html, css} from 'lit'
 import '@material/web/button/outlined-button'
+import '@material/web/button/text-button.js'
 import '@material/web/iconbutton/outlined-icon-button'
+import '@material/web/menu/menu.js'
+import '@material/web/menu/menu-item.js'
 import '@material/web/chips/chip-set'
 import '@material/web/chips/filter-chip'
 import {
+  mdiAccountPlus,
   mdiFamilyTree,
   mdiDna,
   mdiSearchWeb,
@@ -11,18 +15,63 @@ import {
   mdiMap,
 } from '@mdi/js'
 import {GrampsjsObject} from './GrampsjsObject.js'
-import {asteriskIcon, crossIcon} from '../icons.js'
+import {getSymbols} from '../symbols.js'
 import './GrampsjsImg.js'
 import './GrampsjsEditGender.js'
 import './GrampsjsPersonRelationship.js'
 import './GrampsjsFormExternalSearch.js'
-import {fireEvent, givenWithPatronymic, objectIconPath} from '../util.js'
+import {
+  fireEvent,
+  givenWithPatronymic,
+  menuSelectionHandler,
+  objectIconPath,
+} from '../util.js'
 
 export class GrampsjsPerson extends GrampsjsObject {
   static get styles() {
     return [
       super.styles,
       css`
+        .profile-picture-actions {
+          position: relative;
+        }
+
+        .profile-picture-placeholder {
+          width: 200px;
+          height: 200px;
+          border: 2px dashed var(--mdc-theme-secondary);
+          border-radius: 50%;
+          background: transparent;
+          color: var(--mdc-theme-secondary);
+          --md-text-button-container-shape: 50%;
+          --md-text-button-label-text-color: var(--mdc-theme-secondary);
+          --md-text-button-hover-label-text-color: var(--mdc-theme-secondary);
+          --md-text-button-focus-label-text-color: var(--mdc-theme-secondary);
+          --md-text-button-pressed-label-text-color: var(--mdc-theme-secondary);
+          box-sizing: border-box;
+        }
+
+        .profile-picture-content {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          max-width: 150px;
+          white-space: normal;
+        }
+
+        .profile-picture-placeholder:hover {
+          background: var(--md-sys-color-secondary-container);
+          --md-text-button-hover-label-text-color: var(
+            --md-sys-color-on-secondary-container
+          );
+        }
+
+        .profile-picture-placeholder:focus-visible {
+          outline: 2px solid var(--mdc-theme-secondary);
+          outline-offset: 4px;
+        }
+
         span.event {
           display: inline-block;
         }
@@ -83,6 +132,69 @@ export class GrampsjsPerson extends GrampsjsObject {
     this._showRelatedEvents = false
   }
 
+  renderPicture() {
+    if (this.data?.media_list?.length) {
+      return super.renderPicture()
+    }
+    if (!this.edit || this.preview) {
+      return html``
+    }
+    return html`
+      <div class="profile-picture-actions">
+        <md-text-button
+          id="add-profile-picture"
+          type="button"
+          class="profile-picture-placeholder"
+          aria-label="${this._('Add profile picture')}"
+          aria-haspopup="menu"
+          @click=${this._openProfilePictureMenu}
+        >
+          <span class="profile-picture-content">
+            <grampsjs-icon
+              path=${mdiAccountPlus}
+              height="48"
+              width="48"
+              color="currentColor"
+            ></grampsjs-icon>
+            <span>${this._('Add profile picture')}</span>
+          </span>
+        </md-text-button>
+        <md-menu
+          id="profile-picture-menu"
+          anchor="add-profile-picture"
+          positioning="fixed"
+          @close-menu=${menuSelectionHandler(item =>
+            this._addProfilePicture(item.dataset.action)
+          )}
+        >
+          <md-menu-item data-action="upload">
+            <div slot="headline">${this._('Add a new media object')}</div>
+          </md-menu-item>
+          <md-menu-item data-action="link">
+            <div slot="headline">
+              ${this._('Select an existing media object')}
+            </div>
+          </md-menu-item>
+        </md-menu>
+      </div>
+    `
+  }
+
+  _openProfilePictureMenu() {
+    const menu = this.renderRoot.querySelector('#profile-picture-menu')
+    menu.open = true
+  }
+
+  _addProfilePicture(action) {
+    if (!this.edit || this.preview) return
+    const gallery = this.renderRoot.querySelector('grampsjs-gallery')
+    if (action === 'upload') {
+      gallery?.openNewMedia()
+    } else if (action === 'link') {
+      gallery?.openMediaRef()
+    }
+  }
+
   renderProfile() {
     return html`
       <h2>
@@ -125,9 +237,10 @@ export class GrampsjsPerson extends GrampsjsObject {
     if (obj === undefined || Object.keys(obj).length === 0) {
       return ''
     }
+    const {birthSymbol} = getSymbols(this.appState.settings, s => this._(s))
     return html`
       <span class="event">
-        <i>${asteriskIcon}</i>
+        <i>${birthSymbol}</i>
         ${obj.date || ''} ${obj.place ? this._('in') : ''}
         ${obj.place_name || obj.place || ''}
       </span>
@@ -139,9 +252,10 @@ export class GrampsjsPerson extends GrampsjsObject {
     if (obj === undefined || Object.keys(obj).length === 0) {
       return ''
     }
+    const {deathSymbol} = getSymbols(this.appState.settings, s => this._(s))
     return html`
       <span class="event">
-        <i>${crossIcon}</i>
+        <i>${deathSymbol}</i>
         ${obj.date || ''} ${obj.place ? this._('in') : ''}
         ${obj.place_name || obj.place || ''}
       </span>
@@ -234,15 +348,9 @@ export class GrampsjsPerson extends GrampsjsObject {
     `
   }
 
+  // The tree view opens the person in its chart
   _handleTreeButtonClick() {
-    this.dispatchEvent(
-      new CustomEvent('pedigree:person-selected', {
-        bubbles: true,
-        composed: true,
-        detail: {grampsId: this.data.gramps_id},
-      })
-    )
-    fireEvent(this, 'nav', {path: 'tree'})
+    fireEvent(this, 'pedigree:person-selected', {grampsId: this.data.gramps_id})
   }
 
   _handleTimelineButtonClick() {

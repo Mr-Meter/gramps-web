@@ -2,6 +2,7 @@ import {describe, it, expect} from 'vitest'
 import {render, html} from 'lit'
 import {
   translate,
+  objectDetail,
   personTitleFromProfile,
   personDisplayName,
   isPatronymic,
@@ -10,6 +11,7 @@ import {
   reportSelectItemValue,
   familyTitleFromProfile,
   citationTitleFromProfile,
+  eventTitleFromProfile,
   arrayEqual,
   dateIsEmpty,
   getGregorianYears,
@@ -17,9 +19,18 @@ import {
   makeHandle,
   normalizeRect,
   isValidRect,
+  getMediaRegions,
+  addMediaRegion,
+  replaceMediaRegion,
+  removeMediaRegion,
+  rectEqual,
+  rectOverlap,
+  modifyRect,
   apiVersionAtLeast,
   linkUrls,
   isKeyEventInInput,
+  fileWithMimeType,
+  toWritableObject,
 } from '../../src/util.js'
 
 // Helpers
@@ -46,6 +57,17 @@ describe('translate', () => {
 
   it('returns translation if key exists', () => {
     expect(translate(strings, 'Hello')).to.equal('Hola')
+  })
+
+  it('uses the configured text birth symbol in object detail', () => {
+    const result = objectDetail(
+      'person',
+      {profile: {birth: {date: '1990', place: 'Paris'}}},
+      {},
+      {symbolSet: 'text'}
+    )
+    expect(result).to.include('b. 1990')
+    expect(result).not.to.include('∗ 1990')
   })
 
   it('strips leading underscore', () => {
@@ -228,16 +250,37 @@ describe('familyTitleFromProfile', () => {
 
 describe('citationTitleFromProfile', () => {
   it('returns source title with page', () => {
-    const result = citationTitleFromProfile({
-      source: {title: 'Census 1900'},
-      page: '42',
-    })
-    expect(result).to.include('Census 1900')
-    expect(result).to.include('42')
+    expect(
+      citationTitleFromProfile({source: {title: 'Census 1900'}, page: '42'})
+    ).to.equal('Census 1900 (42)')
+  })
+
+  it('returns source title without page', () => {
+    expect(citationTitleFromProfile({source: {title: 'Census 1900'}})).to.equal(
+      'Census 1900'
+    )
   })
 
   it('returns empty string when no source title', () => {
     expect(citationTitleFromProfile({source: {}})).to.equal('')
+  })
+})
+
+describe('eventTitleFromProfile', () => {
+  it('returns summary with date', () => {
+    expect(
+      eventTitleFromProfile({summary: 'Birth of John', date: '1900'})
+    ).to.equal('Birth of John (1900)')
+  })
+
+  it('returns summary without date if asked', () => {
+    expect(
+      eventTitleFromProfile({summary: 'Birth of John', date: '1900'}, false)
+    ).to.equal('Birth of John')
+  })
+
+  it('returns empty string without summary', () => {
+    expect(eventTitleFromProfile({date: '1900'})).to.equal('')
   })
 })
 
@@ -393,6 +436,201 @@ describe('normalizeRect', () => {
 
   it('keeps full-frame boundaries intact', () => {
     expect(normalizeRect([0, 0, 100, 100])).to.deep.equal([0, 0, 100, 100])
+  })
+})
+
+describe('getMediaRegions', () => {
+  const media = {
+    handle: 'M1',
+    extended: {
+      backlinks: {
+        person: [
+          {
+            handle: 'P1',
+            gramps_id: 'I0001',
+            media_list: [
+              {ref: 'M1', rect: [0, 0, 10, 10]},
+              {ref: 'M1', rect: [50, 50, 60, 60]},
+              {ref: 'M2', rect: [1, 1, 2, 2]},
+            ],
+          },
+        ],
+        citation: [
+          {
+            handle: 'C1',
+            gramps_id: 'C0001',
+            media_list: [
+              {ref: 'M1', rect: null},
+              {ref: 'M1', rect: [20, 20, 40, 30]},
+            ],
+          },
+        ],
+      },
+    },
+    profile: {references: {citation: [{page: 'p. 4'}]}},
+  }
+
+  it('returns every region of the image, of any object type', () => {
+    const regions = getMediaRegions(media)
+    expect(regions.map(r => [r.type, r.handle, r.rect])).to.deep.equal([
+      ['person', 'P1', [0, 0, 10, 10]],
+      ['person', 'P1', [50, 50, 60, 60]],
+      ['citation', 'C1', [20, 20, 40, 30]],
+    ])
+    expect(regions[2].grampsId).to.equal('C0001')
+  })
+
+  it('returns an empty list without backlinks', () => {
+    expect(getMediaRegions({handle: 'M1'})).to.deep.equal([])
+  })
+
+  it('labels regions with plain text', () => {
+    const regions = getMediaRegions({
+      handle: 'M1',
+      extended: {
+        backlinks: {
+          event: [
+            {
+              handle: 'E1',
+              gramps_id: 'E0001',
+              media_list: [{ref: 'M1', rect: [0, 0, 5, 5]}],
+            },
+          ],
+          citation: [
+            {
+              handle: 'C1',
+              gramps_id: 'C0001',
+              media_list: [{ref: 'M1', rect: [0, 0, 5, 5]}],
+            },
+          ],
+          family: [
+            {
+              handle: 'F1',
+              gramps_id: 'F0001',
+              media_list: [{ref: 'M1', rect: [0, 0, 5, 5]}],
+            },
+          ],
+        },
+      },
+      profile: {
+        references: {
+          event: [{summary: 'Wedding of A and B', date: '1900-05-01'}],
+          citation: [{source: {title: 'Parish book'}, page: 'p. 4'}],
+          family: [{}],
+        },
+      },
+    })
+    expect(regions.map(r => r.label)).to.deep.equal([
+      'Wedding of A and B (1900-05-01)',
+      'Parish book (p. 4)',
+      'F0001',
+    ])
+  })
+})
+
+describe('addMediaRegion', () => {
+  it('appends a region next to existing references to the same image', () => {
+    const list = [
+      {ref: 'M1', rect: null},
+      {ref: 'M1', rect: [0, 0, 10, 10]},
+    ]
+    expect(addMediaRegion(list, 'M1', [50, 50, 60, 60])).to.deep.equal([
+      ...list,
+      {ref: 'M1', rect: [50, 50, 60, 60]},
+    ])
+  })
+
+  it('leaves the list unchanged when the region already exists', () => {
+    const list = [{ref: 'M1', rect: [0, 0, 10, 10]}]
+    expect(addMediaRegion(list, 'M1', [0, 0, 10, 10])).to.equal(list)
+  })
+})
+
+describe('replaceMediaRegion', () => {
+  it('moves only the matching region', () => {
+    const list = [
+      {ref: 'M1', rect: null},
+      {ref: 'M1', rect: [0, 0, 10, 10], note_list: ['N1']},
+      {ref: 'M1', rect: [50, 50, 60, 60]},
+    ]
+    expect(
+      replaceMediaRegion(list, 'M1', [0, 0, 10, 10], [5, 5, 15, 15])
+    ).to.deep.equal([
+      list[0],
+      {ref: 'M1', rect: [5, 5, 15, 15], note_list: ['N1']},
+      list[2],
+    ])
+  })
+
+  it('leaves the list unchanged when the region does not exist', () => {
+    const list = [{ref: 'M1', rect: [0, 0, 10, 10]}]
+    expect(replaceMediaRegion(list, 'M1', [1, 1, 2, 2], [3, 3, 4, 4])).to.equal(
+      list
+    )
+  })
+})
+
+describe('removeMediaRegion', () => {
+  it('keeps references to the whole image and to other regions', () => {
+    const list = [
+      {ref: 'M1', rect: null},
+      {ref: 'M1', rect: [10, 20, 30, 40]},
+      {ref: 'M1', rect: [20, 10, 40, 30]},
+      {ref: 'M2', rect: [10, 20, 30, 40]},
+    ]
+    expect(removeMediaRegion(list, 'M1', [10, 20, 30, 40])).to.deep.equal([
+      list[0],
+      list[2],
+      list[3],
+    ])
+  })
+})
+
+describe('rectEqual', () => {
+  it('compares coordinates in order', () => {
+    expect(rectEqual([10, 20, 30, 40], [10, 20, 30, 40])).to.be.true
+    expect(rectEqual([10, 20, 30, 40], [20, 10, 40, 30])).to.be.false
+    expect(rectEqual(null, [10, 20, 30, 40])).to.be.false
+  })
+})
+
+describe('rectOverlap', () => {
+  it('returns intersection over union', () => {
+    expect(rectOverlap([0, 0, 10, 10], [0, 0, 10, 10])).to.equal(1)
+    expect(rectOverlap([0, 0, 10, 10], [5, 0, 15, 10])).to.be.closeTo(
+      1 / 3,
+      1e-9
+    )
+    expect(rectOverlap([0, 0, 10, 10], [20, 20, 30, 30])).to.equal(0)
+  })
+})
+
+describe('modifyRect', () => {
+  it('moves a rectangle and keeps it inside the image', () => {
+    expect(modifyRect([10, 10, 30, 20], 'move', 5.4, -3)).to.deep.equal([
+      15, 7, 35, 17,
+    ])
+    expect(modifyRect([10, 10, 30, 20], 'move', 90, -50)).to.deep.equal([
+      80, 0, 100, 10,
+    ])
+  })
+
+  it('resizes a rectangle by a corner', () => {
+    expect(modifyRect([10, 10, 30, 20], 'nw', -5, -5)).to.deep.equal([
+      5, 5, 30, 20,
+    ])
+    expect(modifyRect([10, 10, 30, 20], 'se', 5, 5)).to.deep.equal([
+      10, 10, 35, 25,
+    ])
+    expect(modifyRect([10, 10, 30, 20], 'ne', 200, -200)).to.deep.equal([
+      10, 0, 100, 20,
+    ])
+  })
+
+  it('keeps a resized rectangle at least 1 percent wide and high', () => {
+    expect(modifyRect([10, 10, 30, 20], 'sw', 50, -50)).to.deep.equal([
+      29, 10, 30, 11,
+    ])
   })
 })
 
@@ -566,5 +804,51 @@ describe('isKeyEventInInput', () => {
     expect(
       isKeyEventInInput(keyEvent([element('A'), element('MD-LIST')]))
     ).to.equal(false)
+  })
+})
+
+describe('fileWithMimeType', () => {
+  it('sets the MIME type of geodata files from the extension', () => {
+    const cases = [
+      ['places.geojson', 'application/json', 'application/geo+json'],
+      ['track.GPX', '', 'application/gpx+xml'],
+      ['parish.kml', 'text/xml', 'application/vnd.google-earth.kml+xml'],
+      ['parish.kmz', 'application/zip', 'application/vnd.google-earth.kmz'],
+    ]
+    cases.forEach(([name, type, expected]) => {
+      const file = fileWithMimeType(new File(['x'], name, {type}))
+      expect(file.type).to.equal(expected)
+      expect(file.name).to.equal(name)
+    })
+  })
+
+  it('returns other files unchanged', () => {
+    const files = [
+      new File(['x'], 'photo.jpg', {type: 'image/jpeg'}),
+      new File(['x'], 'README', {type: ''}),
+      new File(['x'], 'parish.kml', {
+        type: 'application/vnd.google-earth.kml+xml',
+      }),
+    ]
+    files.forEach(file => expect(fileWithMimeType(file)).to.equal(file))
+  })
+})
+
+describe('toWritableObject', () => {
+  it('drops the keys the API adds and keeps stored ones', () => {
+    const obj = {
+      _class: 'Family',
+      handle: 'F1',
+      child_ref_list: [{_class: 'ChildRef', ref: 'P1'}],
+      extended: {father: {}},
+      profile: {relationship: 'Married'},
+      backlinks: {event: []},
+      formatted: {father: 'A'},
+    }
+    expect(toWritableObject(obj)).to.deep.equal({
+      _class: 'Family',
+      handle: 'F1',
+      child_ref_list: [{_class: 'ChildRef', ref: 'P1'}],
+    })
   })
 })

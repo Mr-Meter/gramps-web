@@ -5,7 +5,7 @@ import {GrampsjsNewMediaMixin} from '../mixins/GrampsjsNewMediaMixin.js'
 
 import './GrampsjsFormUpload.js'
 
-import {fireEvent, emptyDate} from '../util.js'
+import {fireEvent, emptyDate, fileWithMimeType} from '../util.js'
 
 export class GrampsjsFormNewMedia extends GrampsjsNewMediaMixin(
   GrampsjsObjectForm
@@ -17,7 +17,7 @@ export class GrampsjsFormNewMedia extends GrampsjsNewMediaMixin(
 
   renderForm() {
     return html`
-      <h4 class="label">${this._('File')}</h4>
+      <h3 class="label">${this._('File')}</h3>
       <p>
         <grampsjs-form-upload
           preview
@@ -53,10 +53,14 @@ export class GrampsjsFormNewMedia extends GrampsjsNewMediaMixin(
   async upload(submittedData) {
     let finalData = {...submittedData}
     const uploadElement = this.shadowRoot.getElementById('upload')
-    let data = await this.appState.apiPost('/api/media/', uploadElement.file, {
-      isJson: false,
-      dbChanged: false,
-    })
+    let data = await this.appState.apiPost(
+      '/api/media/',
+      fileWithMimeType(uploadElement.file),
+      {
+        isJson: false,
+        dbChanged: false,
+      }
+    )
     if ('data' in data) {
       finalData = {...data.data[0].new, ...finalData}
     } else if ('error' in data) {
