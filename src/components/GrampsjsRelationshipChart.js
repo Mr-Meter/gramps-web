@@ -12,12 +12,15 @@ class GrampsjsRelationshipChart extends GrampsjsChartBase {
       grampsId: {type: String},
       nameDisplayFormat: {type: String},
       canEdit: {type: Boolean},
+      // start zoomed out to show the whole chart
+      fit: {type: Boolean},
     }
   }
 
   constructor() {
     super()
     this.grampsId = ''
+    this.fit = false
     this._chart = new RelationshipChart()
     this._layout = null
     this._layoutRequest = 0
@@ -40,7 +43,10 @@ class GrampsjsRelationshipChart extends GrampsjsChartBase {
     // A selected person who is not in the data yet is still being fetched, so
     // the current chart stays until new data arrives. If the new data does not
     // contain them either, the chart is cleared.
-    const root = this._graph.personByGrampsId(this.grampsId)
+    // without a selected person (whole tree), anybody is the root
+    const root = this.grampsId
+      ? this._graph.personByGrampsId(this.grampsId)
+      : this._graph.people()[0]
     if (root) {
       this._requestLayout(root.handle)
     } else if (changed.has('data')) {
@@ -59,6 +65,7 @@ class GrampsjsRelationshipChart extends GrampsjsChartBase {
       nameDisplayFormat: this.nameDisplayFormat,
       canEdit: this.canEdit,
       duration: chartTransitionDuration(),
+      fit: this.fit,
       bboxWidth: this.containerWidth,
       bboxHeight: this.containerHeight,
     })

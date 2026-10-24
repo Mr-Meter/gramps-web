@@ -4,9 +4,11 @@ export const TREE_VIEWS = [
   'hourglass',
   'relationship',
   'fan',
+  'whole',
 ]
 
-export const DEFAULT_TREE_VIEW = 'ancestor'
+// Tree fork: the whole family at once, so that relatives see everybody
+export const DEFAULT_TREE_VIEW = 'whole'
 
 export function getTreeViewTabIndex(view) {
   const index = TREE_VIEWS.indexOf(view)

@@ -22,6 +22,7 @@ import {
   mdiHomeAccount,
   mdiPencil,
   mdiPlus,
+  mdiSitemap,
   mdiTargetAccount,
 } from '@mdi/js'
 import {GrampsjsView} from './GrampsjsView.js'
@@ -372,7 +373,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   // one, which happens when the selected person, the chart, the language or a
   // setting of the request changes
   _fetchIfNeeded() {
-    if (!this.grampsId) {
+    if (!this.grampsId && this.definition.needsPerson !== false) {
       return
     }
     const url = chartDataUrl(
@@ -406,7 +407,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   }
 
   renderContent() {
-    if (this.grampsId === '') {
+    if (this.grampsId === '' && this.definition.needsPerson !== false) {
       return this._renderNoHomePerson()
     }
     const {editable} = this.definition
@@ -435,6 +436,7 @@ export class GrampsjsViewTree extends GrampsjsStaleDataMixin(GrampsjsView) {
   // A segmented control to switch between the charts
   renderTabs() {
     const options = [
+      {value: 'whole', label: this._('Whole Tree'), icon: mdiSitemap},
       {
         value: 'ancestor',
         label: this._('Ancestor Tree'),

@@ -290,6 +290,29 @@ export const chartDefinitions = {
     `,
     renderControls: renderFanColorControls,
   },
+
+  // Tree fork: everybody in the tree, laid out like the relationship chart
+  // and zoomed out to show all of it; works without a selected person
+  whole: {
+    settings: [nameDisplayFormatSetting('wholeChartNameDisplayFormat')],
+    editable: true,
+    zoomable: true,
+    needsPerson: false,
+    request: () => ({
+      rules: null,
+      extend: `${treeExtend},parent_family_list`,
+    }),
+    render: ({grampsId, values, data, canEdit}) => html`
+      <grampsjs-relationship-chart
+        grampsId=${grampsId}
+        nameDisplayFormat=${values.nameDisplayFormat}
+        ?canEdit="${canEdit}"
+        fit
+        .data=${data}
+      >
+      </grampsjs-relationship-chart>
+    `,
+  },
 }
 
 // Returns the values of a chart's settings by name, from the user settings or
@@ -306,7 +329,10 @@ export function chartSettingValues(definition, settings = {}) {
 // Returns the API URL of the people a chart needs
 export function chartDataUrl(definition, grampsId, values, lang) {
   const {rules, extend} = definition.request(grampsId, values)
-  return `/api/people/?rules=${encodeURIComponent(
-    JSON.stringify(rules)
-  )}&locale=${lang || 'en'}&profile=self&extend=${extend}`
+  const filter = rules
+    ? `rules=${encodeURIComponent(JSON.stringify(rules))}&`
+    : ''
+  return `/api/people/?${filter}locale=${
+    lang || 'en'
+  }&profile=self&extend=${extend}`
 }

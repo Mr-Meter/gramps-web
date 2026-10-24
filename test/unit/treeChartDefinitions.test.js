@@ -5,6 +5,7 @@ import {
   chartSettingValues,
 } from '../../src/views/treeChartDefinitions.js'
 import {GrampsjsViewTree} from '../../src/views/GrampsjsViewTree.js'
+import {DEFAULT_TREE_VIEW, getTreeViewTabIndex} from '../../src/treeDefaults.js'
 import {chartNameDisplayFormat} from '../../src/util.js'
 
 const rulesOf = url =>
@@ -70,6 +71,16 @@ describe('chart definitions', () => {
     expect(url).toContain('locale=de')
   })
 
+  it('fetches everybody for the whole tree, also without a person', () => {
+    const {whole} = chartDefinitions
+    const url = chartDataUrl(whole, '', chartSettingValues(whole, {}), 'ru')
+    expect(url).not.toContain('rules=')
+    expect(extendOf(url)).toBe(
+      'event_ref_list,primary_parent_family,family_list,parent_family_list'
+    )
+    expect(url).toContain('locale=ru')
+  })
+
   it('only allows adding people to the charts that have cards', () => {
     const editable = Object.entries(chartDefinitions)
       .filter(([, definition]) => definition.editable)
@@ -79,6 +90,7 @@ describe('chart definitions', () => {
       'descendant',
       'hourglass',
       'relationship',
+      'whole',
     ])
   })
 })
@@ -97,10 +109,23 @@ function makeView(settings = {}) {
   const apiGet = vi.fn()
   view.appState = {settings, i18n: {lang: 'en'}, apiGet}
   view.grampsId = 'I1'
+  // the tests below are about the ancestor tree, not the default whole tree
+  view._currentTabId = getTreeViewTabIndex('ancestor')
+  view._appliedTreeDefaultView = DEFAULT_TREE_VIEW
   return {view, apiGet}
 }
 
 describe('GrampsjsViewTree', () => {
+  it('shows the whole tree by default, also without a home person', () => {
+    const view = new GrampsjsViewTree()
+    const apiGet = vi.fn().mockReturnValue(new Promise(() => {}))
+    view.appState = {settings: {}, i18n: {lang: 'en'}, apiGet}
+    expect(view.chart).toBe('whole')
+    view._fetchIfNeeded()
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    expect(apiGet.mock.calls[0][0]).not.toContain('rules=')
+  })
+
   it('fetches again only when the request changes', () => {
     const settings = {}
     const {view, apiGet} = makeView(settings)
