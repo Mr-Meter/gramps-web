@@ -640,6 +640,9 @@ export class GrampsjsViewObjectsBase extends GrampsjsStaleDataMixin(
     const url = this._fullUrl
     this._oldUrl = url
     this.appState.apiGet(url).then(data => {
+      if (url !== this._oldUrl) {
+        return // superseded by a newer request, e.g. in another language
+      }
       this.loading = false
       if ('data' in data) {
         this._errorMessage = ''

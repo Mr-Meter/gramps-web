@@ -42,6 +42,14 @@ export class GrampsjsViewPerson extends GrampsjsViewObject {
     super._clearData()
     this._timelineData = []
     this._timelineLoading = false
+    this._timelineUrl = '' // a late response for the previous person is dropped
+  }
+
+  _handleLangChange(lang) {
+    super._handleLangChange(lang)
+    if (this.active && this._timelineData.length) {
+      this._fetchTimeline()
+    }
   }
 
   _handleTimelineNeeded() {
@@ -57,7 +65,11 @@ export class GrampsjsViewPerson extends GrampsjsViewObject {
     const url = `/api/people/${handle}/timeline?locale=${
       this.appState.i18n.lang || 'en'
     }&precision=2`
+    this._timelineUrl = url
     this.appState.apiGet(url).then(result => {
+      if (url !== this._timelineUrl) {
+        return // superseded by a newer request
+      }
       this._timelineLoading = false
       if ('data' in result) {
         this._timelineData = result.data

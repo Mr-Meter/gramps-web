@@ -428,6 +428,7 @@ export class GrampsjsViewMap extends GrampsjsStaleDataMixin(GrampsjsView) {
       prevLang !== this.appState?.i18n?.lang
     ) {
       this._updateWikidataBuildings({immediate: true})
+      this._fetchPlaces() // place names are translated
     }
   }
 
@@ -869,7 +870,10 @@ export class GrampsjsViewMap extends GrampsjsStaleDataMixin(GrampsjsView) {
   // Places with the shape {handle, profile: {name, lat, long}}
   async _getPlaces() {
     if (apiVersionAtLeast(this.appState.dbInfo, 3, 23)) {
-      const data = await this.appState.apiGet('/api/places/coordinates/')
+      // the locale only serves the translation of place names (Tree fork)
+      const data = await this.appState.apiGet(
+        `/api/places/coordinates/?locale=${this.appState.i18n.lang || 'en'}`
+      )
       if (!('data' in data)) return data
       return {
         data: data.data.map(({handle, name, lat, long}) => ({
@@ -886,7 +890,12 @@ export class GrampsjsViewMap extends GrampsjsStaleDataMixin(GrampsjsView) {
   }
 
   async _fetchPlaces() {
+    this._placesRequest = (this._placesRequest ?? 0) + 1
+    const request = this._placesRequest
     const data = await this._getPlaces()
+    if (request !== this._placesRequest) {
+      return // superseded, e.g. by a request in another language
+    }
     this.loading = false
     if ('data' in data) {
       this.error = false

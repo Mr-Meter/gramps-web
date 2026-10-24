@@ -267,8 +267,14 @@ export class GrampsjsViewObject extends GrampsjsView {
         this._clearData()
       }
       this.loading = true
-      this.appState.apiGet(this.getUrl()).then(data => {
+      const url = this.getUrl()
+      this.appState.apiGet(url).then(data => {
         this.loading = false
+        if (url !== this.getUrl()) {
+          // the language or the object changed meanwhile: an older response
+          // arriving late must not overwrite the newer one
+          return
+        }
         if ('data' in data) {
           ;[this._data] = data.data
           this.error = false

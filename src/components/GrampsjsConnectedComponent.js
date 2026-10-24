@@ -114,11 +114,19 @@ export class GrampsjsConnectedComponent extends GrampsjsStaleDataMixin(
     } else {
       await this._updateGetData(url)
     }
-    this.loading = false
+    if (url === this._oldUrl) {
+      // else a newer request is still loading the data to show
+      this.loading = false
+    }
   }
 
   async _updateGetData(url) {
     const data = await this.appState.apiGet(url)
+    if (url !== this._oldUrl) {
+      // a newer request (e.g. in another language) is under way: an older
+      // response arriving late must not overwrite its data
+      return
+    }
     if ('data' in data) {
       this._data = {data: data.data}
       this.error = false

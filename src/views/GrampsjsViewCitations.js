@@ -29,7 +29,9 @@ export class GrampsjsViewCitations extends GrampsjsViewObjectsBase {
   }
 
   get _fetchUrl() {
-    return '/api/citations/?extend=source_handle&keys=gramps_id,extended,page,change,handle'
+    return `/api/citations/?locale=${
+      this.appState.i18n.lang || 'en'
+    }&extend=source_handle&keys=gramps_id,extended,page,change,handle`
   }
 
   // eslint-disable-next-line class-methods-use-this

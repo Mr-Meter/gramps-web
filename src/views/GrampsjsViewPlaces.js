@@ -29,7 +29,9 @@ export class GrampsjsViewPlaces extends GrampsjsViewObjectsBase {
   }
 
   get _fetchUrl() {
-    return '/api/places/?keys=gramps_id,name,place_type,change,handle'
+    return `/api/places/?locale=${
+      this.appState.i18n.lang || 'en'
+    }&keys=gramps_id,name,place_type,change,handle`
   }
 
   // eslint-disable-next-line class-methods-use-this
